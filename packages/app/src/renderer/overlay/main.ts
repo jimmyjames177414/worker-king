@@ -65,10 +65,18 @@ async function main(): Promise<void> {
   // Audio-reactive avatar (2.2): output amplitude drives the mouth/scale.
   client.on('voice.audio_level', (env) => avatar.setLevel(env.payload.level));
 
+  // Track the live capability summary so the voice model knows what it can route to.
+  let capabilitySummary = '';
+  client.on('capability.updated', (env) => {
+    capabilitySummary = env.payload.manifest.voiceSummary;
+  });
+
   // Voice: push-to-talk (global hotkey) toggles a GPT Realtime session.
-  const voiceHost = new VoiceHost(client, bridge, () =>
-    'You are WorkerKing, a helpful desktop voice assistant. Keep spoken replies concise and natural.',
-  );
+  const voiceHost = new VoiceHost(client, bridge, () => {
+    const base =
+      'You are WorkerKing, a helpful desktop voice assistant. Keep spoken replies concise and natural.';
+    return capabilitySummary ? `${base}\n\n${capabilitySummary}` : base;
+  });
 
   // Wake word (2.3, opt-in): when enabled in config, "Hey <name>" triggers the
   // same session start as the hotkey. Detector is a no-op until a real model is

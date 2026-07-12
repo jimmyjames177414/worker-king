@@ -31,6 +31,11 @@ export interface ClaudeBackendOptions {
   cwd?: string;
   /** Persona appended to Claude Code's preset system prompt. */
   personaAppend?: string;
+  /**
+   * Live persona provider (read per message) — lets settings/character-card
+   * changes apply without restarting. Takes precedence over `personaAppend`.
+   */
+  personaProvider?: () => string;
   /** Permission posture for autonomous tool use. Phase 1 keeps the default. */
   permissionMode?: Options['permissionMode'];
   /** Safety cap on turns per message. */
@@ -55,11 +60,12 @@ export class ClaudeBackend implements Brain {
   constructor(private readonly opts: ClaudeBackendOptions) {}
 
   private buildOptions(): Options {
+    const append = this.opts.personaProvider?.() ?? this.opts.personaAppend;
     const options: Options = {
       systemPrompt: {
         type: 'preset',
         preset: 'claude_code',
-        ...(this.opts.personaAppend ? { append: this.opts.personaAppend } : {}),
+        ...(append ? { append } : {}),
       },
       includePartialMessages: true,
       ...(this.opts.cwd ? { cwd: this.opts.cwd } : {}),

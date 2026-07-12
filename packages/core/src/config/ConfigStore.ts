@@ -25,6 +25,10 @@ export interface WorkerKingConfig {
   wakeWordEnabled: boolean;
   /** Allow Claude to read the foreground window / screenshots; off by default. */
   screenAwareness: boolean;
+  /** The user's display name, for {{user}} in character cards. */
+  userName?: string;
+  /** Active SillyTavern chara_card_v2 (object), if the user imported one. */
+  characterCard?: unknown;
   [key: string]: unknown;
 }
 

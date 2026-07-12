@@ -6,7 +6,10 @@ import { EchoBrain, DeferredBrain, type Brain } from './brain/Brain.js';
 import { createClaudeBackend, probeClaude } from './claude/createClaudeBackend.js';
 import { createWorkerKingToolServer, WORKERKING_TOOL_ALLOWLIST } from './claude/tools.js';
 import { WsScreenContextProvider } from './screen/ScreenContextProvider.js';
+import { CapabilityManager } from './capability/CapabilityManager.js';
+import { realCapabilityQueryFn } from './capability/realCapabilityQuery.js';
 import { assemblePersonaAppend } from './persona/assemblePersona.js';
+import { assemblePersonaFromCard, parseCharacterCard } from './persona/CharacterCard.js';
 import { detectHost } from './util/host.js';
 import { newToken } from './util/ids.js';
 
@@ -40,13 +43,31 @@ export interface RunningDaemon {
  * and the user sees a hint to run `claude login`). Never throws — the daemon must
  * not crash on a Claude auth/setup failure.
  */
+/**
+ * Compute the current persona append from config: a character card if one is
+ * imported (Handlebars-assembled), else the simple name+personality form. Read
+ * live per message so settings/card changes apply without a restart.
+ */
+function computePersonaAppend(config: ConfigStore): string {
+  const card = config.get('characterCard');
+  if (card) {
+    try {
+      const userName = config.get('userName') as string | undefined;
+      return assemblePersonaFromCard(parseCharacterCard(card), { userName }).systemPrompt.append;
+    } catch {
+      // Malformed card → fall back to the simple persona.
+    }
+  }
+  return assemblePersonaAppend(config.get());
+}
+
 async function resolveBrain(
   deferred: DeferredBrain,
   config: ConfigStore,
   server: WsServer,
   mode: 'auto' | 'claude',
+  onCapabilityManager: (cm: CapabilityManager) => void,
 ): Promise<void> {
-  const personaAppend = assemblePersonaAppend(config.get());
   const cwd = config.get('claudeCwd') as string | undefined;
 
   // Screen-awareness tools: capture runs in Electron main (reached over WS).
@@ -57,13 +78,28 @@ async function resolveBrain(
   });
   const claudeOpts = {
     cwd,
-    personaAppend,
+    // Live persona: re-read config (incl. character card) on every message.
+    personaProvider: () => computePersonaAppend(config),
     mcpServers: { workerking: toolServer },
     allowedTools: WORKERKING_TOOL_ALLOWLIST,
   };
 
+  const startCapabilities = () => {
+    const cm = new CapabilityManager({
+      queryFn: realCapabilityQueryFn,
+      sdkOptions: cwd ? { cwd } : {},
+      broadcast: (manifest) => server.broadcast('capability.updated', { manifest }),
+      cwd,
+    });
+    onCapabilityManager(cm);
+    cm.start().catch((e) =>
+      process.stderr.write(`[workerking] capability manifest build failed: ${String(e)}\n`),
+    );
+  };
+
   if (mode === 'claude') {
     deferred.set(createClaudeBackend(claudeOpts));
+    startCapabilities();
     return;
   }
 
@@ -71,6 +107,7 @@ async function resolveBrain(
   if (health.ok) {
     process.stderr.write('[workerking] Claude Code ready — using ClaudeBackend\n');
     deferred.set(createClaudeBackend(claudeOpts));
+    startCapabilities();
   } else {
     process.stderr.write(
       `[workerking] Claude Code unavailable (${health.detail ?? 'unknown'}); ` +
@@ -96,6 +133,7 @@ export async function startDaemon(opts: StartDaemonOptions = {}): Promise<Runnin
   // used directly; otherwise a DeferredBrain is installed now and the real Claude
   // brain resolves in the background (bounded probe) and swaps itself in.
   const mode = opts.brainMode ?? 'auto';
+  let capabilityManager: CapabilityManager | undefined;
   let brain: Brain;
   if (opts.brain) {
     brain = opts.brain;
@@ -104,7 +142,9 @@ export async function startDaemon(opts: StartDaemonOptions = {}): Promise<Runnin
   } else {
     const deferred = new DeferredBrain();
     brain = deferred;
-    void resolveBrain(deferred, config, server, mode);
+    void resolveBrain(deferred, config, server, mode, (cm) => {
+      capabilityManager = cm;
+    });
   }
   new Supervisor(server, config, brain);
 
@@ -125,6 +165,7 @@ export async function startDaemon(opts: StartDaemonOptions = {}): Promise<Runnin
     token,
     server,
     stop: async () => {
+      await capabilityManager?.stop();
       await server.close();
     },
   };
