@@ -35,6 +35,10 @@ export interface ClaudeBackendOptions {
   permissionMode?: Options['permissionMode'];
   /** Safety cap on turns per message. */
   maxTurns?: number;
+  /** In-process SDK MCP servers (e.g. WorkerKing's screen-awareness tools). */
+  mcpServers?: Options['mcpServers'];
+  /** Tool names allowed without a permission prompt (e.g. the WorkerKing tools). */
+  allowedTools?: string[];
 }
 
 export class ClaudeAuthError extends Error {
@@ -61,6 +65,8 @@ export class ClaudeBackend implements Brain {
       ...(this.opts.cwd ? { cwd: this.opts.cwd } : {}),
       ...(this.opts.permissionMode ? { permissionMode: this.opts.permissionMode } : {}),
       ...(this.opts.maxTurns ? { maxTurns: this.opts.maxTurns } : {}),
+      ...(this.opts.mcpServers ? { mcpServers: this.opts.mcpServers } : {}),
+      ...(this.opts.allowedTools ? { allowedTools: this.opts.allowedTools } : {}),
       ...(this.sessionId ? { resume: this.sessionId } : {}),
     };
     return options;

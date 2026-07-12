@@ -11,6 +11,8 @@ export function createClaudeBackend(
   return new ClaudeBackend({ queryFn: query, ...opts });
 }
 
+export type { ClaudeBackendOptions } from './ClaudeBackend.js';
+
 export interface ClaudeHealth {
   ok: boolean;
   detail?: string;

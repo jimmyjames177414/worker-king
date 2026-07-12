@@ -77,6 +77,28 @@ const voiceRecyclePayload = z.object({
   reason: z.enum(['session_limit', 'persona_change', 'manual']).default('manual'),
 });
 
+/** Normalized output-audio amplitude (0..1) for the audio-reactive avatar. */
+const voiceAudioLevelPayload = z.object({
+  level: z.number().min(0).max(1),
+});
+
+// Screen awareness (daemon <-> Electron main). Capture happens in main (Windows),
+// even when the daemon runs in WSL, so it crosses the WS bus as a request/response.
+const screenCaptureRequestPayload = z.object({
+  /** 'window' = foreground window only; 'screen' = full primary display. */
+  target: z.enum(['window', 'screen']).default('window'),
+  /** Include a screenshot image, or just the window/title metadata. */
+  includeImage: z.boolean().default(true),
+});
+const screenCaptureResultPayload = z.object({
+  ok: z.boolean(),
+  /** Foreground window/app title, when available. */
+  activeWindowTitle: z.string().optional(),
+  /** PNG screenshot as a data URI (data:image/png;base64,...), when requested. */
+  imageDataUrl: z.string().optional(),
+  error: z.string().optional(),
+});
+
 const taskCreatedPayload = z.object({ task: taskSchema });
 const taskProgressPayload = z.object({
   taskId: z.string(),
@@ -139,6 +161,10 @@ export const payloadSchemas = {
   'voice.state': voiceStatePayload,
   'voice.inject': voiceInjectPayload,
   'voice.recycle': voiceRecyclePayload,
+  'voice.audio_level': voiceAudioLevelPayload,
+
+  'screen.capture_request': screenCaptureRequestPayload,
+  'screen.capture_result': screenCaptureResultPayload,
 
   'task.created': taskCreatedPayload,
   'task.progress': taskProgressPayload,

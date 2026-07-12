@@ -48,6 +48,7 @@ export class WsServer {
   private wss?: WebSocketServer;
   private handler?: MessageHandler;
   private readonly clients = new Map<string, WsClient>();
+  private readonly replyHandlers = new Map<string, (env: WsEnvelope) => void>();
   private connSeq = 0;
 
   constructor(opts: WsServerOptions) {
@@ -59,6 +60,21 @@ export class WsServer {
 
   onMessage(handler: MessageHandler): void {
     this.handler = handler;
+  }
+
+  /** Find the first connected client matching a predicate (e.g. role === 'main'). */
+  findClient(pred: (c: WsClient) => boolean): WsClient | undefined {
+    for (const c of this.clients.values()) if (pred(c)) return c;
+    return undefined;
+  }
+
+  /**
+   * Register a one-shot handler for the reply to `requestId` (a message whose
+   * `replyTo` equals it). Returns a dispose function to cancel the wait.
+   */
+  onceReply(requestId: string, handler: (env: WsEnvelope) => void): () => void {
+    this.replyHandlers.set(requestId, handler);
+    return () => this.replyHandlers.delete(requestId);
   }
 
   /** Start listening. Pass 0 (default) for an OS-assigned ephemeral port. */
@@ -117,6 +133,15 @@ export class WsServer {
       if (env.kind === 'ping') {
         client.send('pong', {}, { replyTo: env.id });
         return;
+      }
+      // Route replies (e.g. screen.capture_result) to a waiting requester.
+      if (env.replyTo) {
+        const rh = this.replyHandlers.get(env.replyTo);
+        if (rh) {
+          this.replyHandlers.delete(env.replyTo);
+          rh(env);
+          return;
+        }
       }
       this.handler?.(client, env);
     });

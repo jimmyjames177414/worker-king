@@ -62,6 +62,33 @@ describe('makeEnvelope + parseEnvelope round-trip', () => {
       expect(env.payload.speakNow).toBe(false);
     }
   });
+
+  it('round-trips a screen.capture_request with defaults', () => {
+    const env = makeEnvelope(ctx, 'screen.capture_request', {});
+    if (isKind(env, 'screen.capture_request')) {
+      expect(env.payload.target).toBe('window');
+      expect(env.payload.includeImage).toBe(true);
+    }
+    const parsed = parseEnvelope(serializeEnvelope(env));
+    expect(parsed.payload).toEqual(env.payload);
+  });
+
+  it('round-trips a screen.capture_result', () => {
+    const env = makeEnvelope(ctx, 'screen.capture_result', {
+      ok: true,
+      activeWindowTitle: 'notes.txt — Notepad',
+      imageDataUrl: 'data:image/png;base64,AAAA',
+    });
+    const parsed = parseEnvelope(serializeEnvelope(env));
+    expect(parsed.payload).toEqual(env.payload);
+  });
+
+  it('validates voice.audio_level bounds', () => {
+    const env = makeEnvelope(ctx, 'voice.audio_level', { level: 0.5 });
+    expect(parseEnvelope(serializeEnvelope(env)).payload).toEqual({ level: 0.5 });
+    const bad = { v: 1, id: 'x', kind: 'voice.audio_level', ts: 0, payload: { level: 5 } };
+    expect(() => parseEnvelope(bad)).toThrowError(ProtocolError);
+  });
 });
 
 describe('parseEnvelope validation', () => {

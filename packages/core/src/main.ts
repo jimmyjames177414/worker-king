@@ -4,6 +4,8 @@ import { ConfigStore } from './config/ConfigStore.js';
 import { Supervisor } from './supervisor/Supervisor.js';
 import { EchoBrain, DeferredBrain, type Brain } from './brain/Brain.js';
 import { createClaudeBackend, probeClaude } from './claude/createClaudeBackend.js';
+import { createWorkerKingToolServer, WORKERKING_TOOL_ALLOWLIST } from './claude/tools.js';
+import { WsScreenContextProvider } from './screen/ScreenContextProvider.js';
 import { assemblePersonaAppend } from './persona/assemblePersona.js';
 import { detectHost } from './util/host.js';
 import { newToken } from './util/ids.js';
@@ -41,20 +43,34 @@ export interface RunningDaemon {
 async function resolveBrain(
   deferred: DeferredBrain,
   config: ConfigStore,
+  server: WsServer,
   mode: 'auto' | 'claude',
 ): Promise<void> {
   const personaAppend = assemblePersonaAppend(config.get());
   const cwd = config.get('claudeCwd') as string | undefined;
 
+  // Screen-awareness tools: capture runs in Electron main (reached over WS).
+  const toolServer = createWorkerKingToolServer({
+    config,
+    screen: new WsScreenContextProvider(server),
+    audit: (e) => process.stderr.write(`[workerking][screen] ${e.tool}: ${e.detail}\n`),
+  });
+  const claudeOpts = {
+    cwd,
+    personaAppend,
+    mcpServers: { workerking: toolServer },
+    allowedTools: WORKERKING_TOOL_ALLOWLIST,
+  };
+
   if (mode === 'claude') {
-    deferred.set(createClaudeBackend({ cwd, personaAppend }));
+    deferred.set(createClaudeBackend(claudeOpts));
     return;
   }
 
   const health = await probeClaude(cwd);
   if (health.ok) {
     process.stderr.write('[workerking] Claude Code ready — using ClaudeBackend\n');
-    deferred.set(createClaudeBackend({ cwd, personaAppend }));
+    deferred.set(createClaudeBackend(claudeOpts));
   } else {
     process.stderr.write(
       `[workerking] Claude Code unavailable (${health.detail ?? 'unknown'}); ` +
@@ -88,7 +104,7 @@ export async function startDaemon(opts: StartDaemonOptions = {}): Promise<Runnin
   } else {
     const deferred = new DeferredBrain();
     brain = deferred;
-    void resolveBrain(deferred, config, mode);
+    void resolveBrain(deferred, config, server, mode);
   }
   new Supervisor(server, config, brain);
 

@@ -13,12 +13,18 @@ export interface WorkerKingConfig {
   personality: string;
   /** Active voice provider id. */
   voiceProvider: 'gpt-realtime' | 'local-cascade';
+  /** OpenAI Realtime model for the voice layer. */
+  openaiModel: string;
   /** Where the Claude backend runs. 'auto' probes Windows then WSL. */
   claudeHost: 'auto' | 'windows' | 'wsl';
   /** Working directory for the Claude Agent SDK session. */
   claudeCwd?: string;
   /** Push-to-talk global shortcut accelerator. */
   hotkey: string;
+  /** Always-listening wake word ("Hey <name>"); off by default (hotkey-first). */
+  wakeWordEnabled: boolean;
+  /** Allow Claude to read the foreground window / screenshots; off by default. */
+  screenAwareness: boolean;
   [key: string]: unknown;
 }
 
@@ -28,8 +34,11 @@ export const DEFAULT_CONFIG: WorkerKingConfig = {
     'A capable, upbeat desktop companion. Concise out loud, thorough when it matters. ' +
     'Delegates real work to Claude Code and narrates progress plainly.',
   voiceProvider: 'gpt-realtime',
+  openaiModel: 'gpt-realtime-mini',
   claudeHost: 'auto',
   hotkey: 'Control+Shift+Space',
+  wakeWordEnabled: false,
+  screenAwareness: false,
 };
 
 export type ConfigChangeListener = (key: string, value: unknown) => void;

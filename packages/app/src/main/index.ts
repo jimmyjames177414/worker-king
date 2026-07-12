@@ -7,6 +7,8 @@ import { createChatWindow, toggleChatWindow } from './windows/ChatWindow.js';
 import { registerClickThrough } from './ClickThroughManager.js';
 import { createTray } from './TrayController.js';
 import { registerIpc } from './ipc.js';
+import { DaemonClient } from './DaemonClient.js';
+import { captureScreen } from './ScreenCapture.js';
 
 /**
  * WorkerKing Electron main. Phase 0 wiring:
@@ -30,6 +32,7 @@ const config = new Store<AppConfig>({
 
 let supervisor: DaemonSupervisor | undefined;
 let connection: DaemonConnection | undefined;
+let daemonClient: DaemonClient | undefined;
 let overlay: BrowserWindow | undefined;
 let chat: BrowserWindow | undefined;
 let quitting = false;
@@ -55,6 +58,16 @@ async function boot(): Promise<void> {
   });
 
   connection = await supervisor.start();
+
+  // Main connects to the daemon as role 'main' to service screen-capture requests
+  // (screenshots + foreground window title happen here, even if the daemon is in WSL).
+  daemonClient = new DaemonClient(connection);
+  daemonClient.on('screen.capture_request', (env) => {
+    void captureScreen(env.payload).then((result) => {
+      daemonClient?.send('screen.capture_result', result, { replyTo: env.id });
+    });
+  });
+  daemonClient.connect();
 
   registerIpc((win) => {
     if (!connection) return undefined;
@@ -99,6 +112,7 @@ app.on('before-quit', () => {
 
 app.on('will-quit', () => {
   globalShortcut.unregisterAll();
+  daemonClient?.close();
   supervisor?.stop();
 });
 
