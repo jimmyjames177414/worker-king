@@ -2,7 +2,9 @@ import { writeFileSync } from 'node:fs';
 import { WsServer } from './ws/server.js';
 import { ConfigStore } from './config/ConfigStore.js';
 import { Supervisor } from './supervisor/Supervisor.js';
-import { EchoBrain } from './brain/Brain.js';
+import { EchoBrain, DeferredBrain, type Brain } from './brain/Brain.js';
+import { createClaudeBackend, probeClaude } from './claude/createClaudeBackend.js';
+import { assemblePersonaAppend } from './persona/assemblePersona.js';
 import { detectHost } from './util/host.js';
 import { newToken } from './util/ids.js';
 
@@ -13,7 +15,13 @@ export interface StartDaemonOptions {
   token?: string;
   /** Where to write the handshake file (port + token) for the Electron app. */
   handshakeFile?: string;
-  brain?: EchoBrain;
+  /** Inject a brain (tests). If omitted, boot picks ClaudeBackend or EchoBrain. */
+  brain?: Brain;
+  /**
+   * Force the brain choice. 'auto' (default) probes Claude and falls back to
+   * echo; 'claude' requires Claude; 'echo' is the no-AI Phase 0 brain.
+   */
+  brainMode?: 'auto' | 'claude' | 'echo';
 }
 
 export interface RunningDaemon {
@@ -21,6 +29,39 @@ export interface RunningDaemon {
   token: string;
   server: WsServer;
   stop: () => Promise<void>;
+}
+
+/**
+ * Resolve the real brain in the background and install it into `deferred`.
+ * 'auto' warms/probes Claude Code; if it's authenticated it wins, otherwise we
+ * fall back to EchoBrain so the daemon still works (chat UI runs, just without AI,
+ * and the user sees a hint to run `claude login`). Never throws — the daemon must
+ * not crash on a Claude auth/setup failure.
+ */
+async function resolveBrain(
+  deferred: DeferredBrain,
+  config: ConfigStore,
+  mode: 'auto' | 'claude',
+): Promise<void> {
+  const personaAppend = assemblePersonaAppend(config.get());
+  const cwd = config.get('claudeCwd') as string | undefined;
+
+  if (mode === 'claude') {
+    deferred.set(createClaudeBackend({ cwd, personaAppend }));
+    return;
+  }
+
+  const health = await probeClaude(cwd);
+  if (health.ok) {
+    process.stderr.write('[workerking] Claude Code ready — using ClaudeBackend\n');
+    deferred.set(createClaudeBackend({ cwd, personaAppend }));
+  } else {
+    process.stderr.write(
+      `[workerking] Claude Code unavailable (${health.detail ?? 'unknown'}); ` +
+        'falling back to EchoBrain. Run `claude login` and restart for the real brain.\n',
+    );
+    deferred.set(new EchoBrain());
+  }
 }
 
 /**
@@ -34,7 +75,21 @@ export async function startDaemon(opts: StartDaemonOptions = {}): Promise<Runnin
 
   const config = new ConfigStore();
   const server = new WsServer({ token, host, daemonVersion: DAEMON_VERSION });
-  const brain = opts.brain ?? new EchoBrain();
+
+  // Pick the brain without blocking boot: an injected brain or the echo brain is
+  // used directly; otherwise a DeferredBrain is installed now and the real Claude
+  // brain resolves in the background (bounded probe) and swaps itself in.
+  const mode = opts.brainMode ?? 'auto';
+  let brain: Brain;
+  if (opts.brain) {
+    brain = opts.brain;
+  } else if (mode === 'echo') {
+    brain = new EchoBrain();
+  } else {
+    const deferred = new DeferredBrain();
+    brain = deferred;
+    void resolveBrain(deferred, config, mode);
+  }
   new Supervisor(server, config, brain);
 
   const requestedPort =

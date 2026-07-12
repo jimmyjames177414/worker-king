@@ -82,7 +82,8 @@ describe('core daemon (Phase 0)', () => {
   let daemon: RunningDaemon;
 
   beforeAll(async () => {
-    daemon = await startDaemon({ port: 0, token: 'test-token' });
+    // Pin to the echo brain so these tests don't attempt to spawn Claude Code.
+    daemon = await startDaemon({ port: 0, token: 'test-token', brainMode: 'echo' });
   });
 
   afterAll(async () => {
