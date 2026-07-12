@@ -1,10 +1,20 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type { WorkerKingConnection } from './overlay.js';
 
-/** Chat preload. Exposes only the connection resolver; chat traffic is WS. */
+/**
+ * Chat preload. Exposes the daemon connection (chat traffic is WS) plus the
+ * settings surface: config read/write, write-only secret storage, and a
+ * has-secret check for UI state.
+ */
 const api = {
   getConnection: (): Promise<WorkerKingConnection | undefined> =>
     ipcRenderer.invoke('wk:get-connection'),
+  getConfig: (): Promise<Record<string, unknown>> => ipcRenderer.invoke('wk:get-config'),
+  setConfig: (key: string, value: unknown): Promise<void> =>
+    ipcRenderer.invoke('wk:set-config', key, value),
+  setSecret: (key: string, value: string): Promise<void> =>
+    ipcRenderer.invoke('wk:set-secret', key, value),
+  hasSecret: (key: string): Promise<boolean> => ipcRenderer.invoke('wk:has-secret', key),
 };
 
 contextBridge.exposeInMainWorld('workerking', api);

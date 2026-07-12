@@ -42,3 +42,21 @@ here on Windows. Screen awareness (Track S) is already verified end-to-end in-co
       calls `capture_screen`, and the real screenshot/window title comes back from
       Electron main (`desktopCapturer`).
 - [ ] With `screenAwareness` off, Claude reports the feature is disabled.
+
+## Phase 4 — settings, cards, capability discovery
+
+### Settings window (⚙ in the chat header)
+- [ ] Enter your OpenAI API key → shows "✓ saved"; voice now works (key never
+      appears in the renderer, only ephemeral `ek_...`).
+- [ ] Change assistant name / personality / model / hotkey / toggles → persists and
+      takes effect live (next chat/voice reply reflects the new persona; new hotkey binds).
+- [ ] `screenAwareness` / `wakeWordEnabled` toggles reach the daemon/overlay.
+
+### Character cards
+- [ ] Import a SillyTavern `chara_card_v2` JSON → name + personality change; the next
+      reply speaks in that persona. (Verified in-container via golden tests; confirm the
+      file picker + live reload on Windows.)
+
+### Capability discovery (verified in-container; confirm on Windows)
+- [ ] Add a new `SKILL.md` under `~/.claude/skills/...` → within a moment the daemon
+      re-broadcasts the manifest and the voice model can route to it (no restart).

@@ -1,4 +1,5 @@
 import { connectToDaemon, type WsClient } from '../shared/wsClient.js';
+import { Settings, type SettingsBridge } from './Settings.js';
 
 /**
  * Chat renderer entry. Phase 0: a text box that sends chat.user_message and
@@ -43,6 +44,21 @@ async function main(): Promise<void> {
   client.on('welcome', (env) => {
     status.textContent = `connected (daemon ${env.payload.daemonVersion}, host ${env.payload.host})`;
   });
+
+  // Settings panel (⚙): the configurable-in-all-aspects surface.
+  const bridge = (window as unknown as { workerking: SettingsBridge }).workerking;
+  const settingsEl = document.getElementById('settings');
+  const settingsBody = document.getElementById('settings-body');
+  if (settingsEl && settingsBody) {
+    const settings = new Settings(settingsBody, bridge);
+    document.getElementById('gear')?.addEventListener('click', () => {
+      settingsEl.classList.add('open');
+      void settings.render();
+    });
+    document.getElementById('settings-close')?.addEventListener('click', () =>
+      settingsEl.classList.remove('open'),
+    );
+  }
 
   // Track the in-flight assistant bubble by messageId.
   const bubbles = new Map<string, HTMLElement>();

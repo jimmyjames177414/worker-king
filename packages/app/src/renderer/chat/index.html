@@ -26,15 +26,41 @@
       #input { flex: 1; padding: 9px 12px; border-radius: 10px; border: 1px solid rgba(128,128,128,0.4); background: Field; color: FieldText; font: inherit; }
       button { padding: 9px 16px; border: none; border-radius: 10px; background: #2a6cff; color: #fff; font: inherit; cursor: pointer; }
       button:hover { filter: brightness(1.08); }
+      #gear { background: transparent; color: inherit; font-size: 16px; padding: 2px 6px; }
+      #settings { display: none; position: absolute; inset: 0; background: Canvas; overflow-y: auto; padding: 14px 16px; z-index: 5; }
+      #settings.open { display: block; }
+      #settings h2 { margin: 4px 0 12px; }
+      #settings label { display: block; margin: 10px 0; font-size: 13px; font-weight: 600; }
+      #settings label.check { font-weight: 400; display: flex; align-items: center; gap: 8px; }
+      #settings input:not([type=checkbox]), #settings textarea, #settings select {
+        display: block; width: 100%; margin-top: 4px; padding: 7px 9px; border-radius: 8px;
+        border: 1px solid rgba(128,128,128,0.4); background: Field; color: FieldText; font: inherit; box-sizing: border-box;
+      }
+      #settings .row { display: flex; gap: 8px; align-items: center; }
+      #settings .row input { margin-top: 0; }
+      #settings hr { border: none; border-top: 1px solid rgba(128,128,128,0.25); margin: 14px 0; }
+      #settings .ok { color: #17c964; } #settings .warn { color: #f5a623; }
+      #settings .status { font-size: 12px; opacity: 0.7; min-height: 16px; }
+      #settings-close { margin-top: 8px; background: rgba(128,128,128,0.25); color: inherit; }
     </style>
   </head>
   <body>
-    <header><span>WorkerKing</span><span id="status">connecting…</span></header>
+    <header>
+      <span>WorkerKing</span>
+      <span class="row" style="display:flex;gap:10px;align-items:center">
+        <span id="status">connecting…</span>
+        <button id="gear" title="Settings">⚙</button>
+      </span>
+    </header>
     <div id="log"></div>
     <form id="composer">
       <input id="input" type="text" placeholder="Ask WorkerKing…" autocomplete="off" autofocus />
       <button type="submit">Send</button>
     </form>
+    <section id="settings">
+      <div id="settings-body"></div>
+      <button id="settings-close">Close</button>
+    </section>
     <script type="module" src="./main.ts"></script>
   </body>
 </html>

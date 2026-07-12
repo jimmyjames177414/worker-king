@@ -48,7 +48,7 @@ export interface RunningDaemon {
  * imported (Handlebars-assembled), else the simple name+personality form. Read
  * live per message so settings/card changes apply without a restart.
  */
-function computePersonaAppend(config: ConfigStore): string {
+export function computePersonaAppend(config: ConfigStore): string {
   const card = config.get('characterCard');
   if (card) {
     try {
