@@ -28,6 +28,8 @@ export interface VoiceTurnDelegate {
   onUserTranscript(text: string, final: boolean): void;
   onAssistantTranscript(text: string, final: boolean): void;
   onStateChange(state: VoiceProviderState): void;
+  /** Normalized output-audio amplitude (0..1) for the audio-reactive avatar. */
+  onAudioLevel?(level: number): void;
   onError(err: Error): void;
 }
 

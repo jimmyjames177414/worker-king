@@ -1,6 +1,8 @@
 import { connectToDaemon } from '../shared/wsClient.js';
 import { AvatarController } from './AvatarController.js';
+import { Captions } from './Captions.js';
 import { VoiceHost } from './VoiceHost.js';
+import { WakeWordController, NullWakeWordDetector } from './WakeWord.js';
 
 /**
  * Overlay renderer entry. Wires:
@@ -22,6 +24,9 @@ async function main(): Promise<void> {
   const avatarEl = document.getElementById('avatar');
   if (!avatarEl) throw new Error('avatar element missing');
   const avatar = new AvatarController(avatarEl);
+
+  const captionsEl = document.getElementById('captions');
+  const captions = captionsEl ? new Captions(captionsEl) : undefined;
 
   // Hover makes the overlay solid so the avatar is interactive; leaving restores
   // full click-through to the desktop.
@@ -52,10 +57,31 @@ async function main(): Promise<void> {
     avatar.set(map[env.payload.state] ?? 'idle');
   });
 
+  // Live captions from voice transcripts (2.1).
+  client.on('voice.transcript', (env) => {
+    captions?.show(env.payload.role, env.payload.text);
+  });
+
+  // Audio-reactive avatar (2.2): output amplitude drives the mouth/scale.
+  client.on('voice.audio_level', (env) => avatar.setLevel(env.payload.level));
+
   // Voice: push-to-talk (global hotkey) toggles a GPT Realtime session.
-  new VoiceHost(client, bridge, () =>
+  const voiceHost = new VoiceHost(client, bridge, () =>
     'You are WorkerKing, a helpful desktop voice assistant. Keep spoken replies concise and natural.',
   );
+
+  // Wake word (2.3, opt-in): when enabled in config, "Hey <name>" triggers the
+  // same session start as the hotkey. Detector is a no-op until a real model is
+  // installed (see WakeWord.ts).
+  const wake = new WakeWordController(new NullWakeWordDetector(), () => void voiceHost.toggle());
+  const applyWakeConfig = (enabled: unknown) => {
+    if (enabled === true) void wake.enable().catch((e) => console.error('[wake] enable failed', e));
+    else wake.disable();
+  };
+  client.on('config.changed', (env) => {
+    if (env.payload.key === 'wakeWordEnabled') applyWakeConfig(env.payload.value);
+  });
+  client.send('config.get', { key: 'wakeWordEnabled' });
 }
 
 main();

@@ -26,6 +26,15 @@ export class AvatarController {
     return this.current;
   }
 
+  /**
+   * Drive the audio-reactive "mouth"/scale from a 0..1 level. Only visible while
+   * talking; a CSS custom property lets the stylesheet decide how it maps to size.
+   */
+  setLevel(level: number): void {
+    const clamped = Math.max(0, Math.min(1, level));
+    this.el.style.setProperty('--avatar-level', clamped.toFixed(3));
+  }
+
   private apply(): void {
     for (const s of STATES) this.el.classList.toggle(`avatar--${s}`, s === this.current);
     this.el.dataset.state = this.current;

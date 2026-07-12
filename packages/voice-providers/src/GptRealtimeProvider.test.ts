@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import {
   GptRealtimeProvider,
   extractTranscript,
+  computePcm16Rms,
   type RealtimeSessionLike,
   type SessionFactoryConfig,
 } from './GptRealtimeProvider.js';
@@ -47,6 +48,7 @@ function makeDelegate() {
   const states: VoiceProviderState[] = [];
   const userTranscripts: string[] = [];
   const assistantTranscripts: string[] = [];
+  const levels: number[] = [];
   const errors: Error[] = [];
   const opts: VoiceStartOptions = {
     systemPrompt: 'You are WorkerKing.',
@@ -56,10 +58,11 @@ function makeDelegate() {
       onUserTranscript: (t) => userTranscripts.push(t),
       onAssistantTranscript: (t) => assistantTranscripts.push(t),
       onStateChange: (s) => states.push(s),
+      onAudioLevel: (l) => levels.push(l),
       onError: (e) => errors.push(e),
     },
   };
-  return { opts, states, userTranscripts, assistantTranscripts, errors };
+  return { opts, states, userTranscripts, assistantTranscripts, levels, errors };
 }
 
 describe('extractTranscript', () => {
@@ -80,6 +83,21 @@ describe('extractTranscript', () => {
   it('ignores non-message items', () => {
     expect(extractTranscript({ type: 'function_call' })).toBeUndefined();
     expect(extractTranscript(null)).toBeUndefined();
+  });
+});
+
+describe('computePcm16Rms', () => {
+  it('is 0 for silence and empty buffers', () => {
+    expect(computePcm16Rms(new ArrayBuffer(0))).toBe(0);
+    expect(computePcm16Rms(new Int16Array([0, 0, 0, 0]).buffer)).toBe(0);
+  });
+  it('rises with amplitude and clamps to 1', () => {
+    const quiet = computePcm16Rms(new Int16Array([1000, -1000, 1000, -1000]).buffer);
+    const loud = computePcm16Rms(new Int16Array([20000, -20000, 20000, -20000]).buffer);
+    expect(quiet).toBeGreaterThan(0);
+    expect(loud).toBeGreaterThan(quiet);
+    const max = computePcm16Rms(new Int16Array([32767, -32768, 32767, -32768]).buffer);
+    expect(max).toBe(1);
   });
 });
 
@@ -162,6 +180,16 @@ describe('GptRealtimeProvider', () => {
 
     await provider.recycleSession();
     expect(fake.closed).toBe(true); // old session closed during recycle
+  });
+
+  it('forwards output audio chunks as normalized levels', async () => {
+    const { provider, fake } = build();
+    const { opts, levels } = makeDelegate();
+    await provider.start(opts);
+    fake.emit('audio', { type: 'audio', data: new Int16Array([16000, -16000, 16000]).buffer });
+    expect(levels.length).toBe(1);
+    expect(levels[0]).toBeGreaterThan(0);
+    expect(levels[0]).toBeLessThanOrEqual(1);
   });
 
   it('surfaces session errors and sets error state', async () => {

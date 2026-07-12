@@ -70,6 +70,7 @@ export class VoiceHost {
           onAssistantTranscript: (text, final) =>
             this.ws.send('voice.transcript', { role: 'assistant', text, final }),
           onStateChange: (state) => this.ws.send('voice.state', { state }),
+          onAudioLevel: (level) => this.ws.send('voice.audio_level', { level }),
           onError: (err) => {
             this.ws.send('voice.state', { state: 'error' });
             console.error('[voice]', err);

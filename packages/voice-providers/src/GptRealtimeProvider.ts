@@ -81,6 +81,14 @@ export class GptRealtimeProvider implements VoiceProvider {
       else opts.delegate.onAssistantTranscript(t.text, true);
     });
 
+    // Output audio chunks (PCM16) → normalized amplitude for the reactive avatar.
+    if (opts.delegate.onAudioLevel) {
+      session.on('audio', (...args: unknown[]) => {
+        const evt = args[0] as { data?: ArrayBuffer } | undefined;
+        if (evt?.data) opts.delegate.onAudioLevel?.(computePcm16Rms(evt.data));
+      });
+    }
+
     session.on('error', (...args: unknown[]) => {
       const err = args[0];
       this.setState('error');
@@ -124,6 +132,23 @@ export class GptRealtimeProvider implements VoiceProvider {
     this.session?.close();
     await this.start(this.startOpts);
   }
+}
+
+/**
+ * Compute a normalized (0..1) loudness from a PCM16 audio chunk.
+ * RMS of the 16-bit samples / full scale, lightly boosted so quiet speech still
+ * moves the avatar. Transport-agnostic (works for WebRTC and WebSocket audio).
+ */
+export function computePcm16Rms(buffer: ArrayBuffer, boost = 1.8): number {
+  const samples = new Int16Array(buffer);
+  if (samples.length === 0) return 0;
+  let sumSquares = 0;
+  for (let i = 0; i < samples.length; i++) {
+    const s = samples[i] / 32768;
+    sumSquares += s * s;
+  }
+  const rms = Math.sqrt(sumSquares / samples.length);
+  return Math.max(0, Math.min(1, rms * boost));
 }
 
 /** Pull role + text out of a RealtimeItem-shaped history entry. */
