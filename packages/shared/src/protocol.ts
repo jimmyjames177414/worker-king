@@ -1,0 +1,298 @@
+import { z } from 'zod';
+import {
+  taskSchema,
+  taskProgressSchema,
+  capabilityManifestSchema,
+  avatarStateSchema,
+} from './domain.js';
+
+/**
+ * The single typed WebSocket protocol every WorkerKing process speaks.
+ *
+ * Renderer <-> daemon and main <-> daemon share this one envelope. Electron IPC
+ * is reserved only for things that are inherently main-process (window control,
+ * tray, safeStorage). Everything else — voice tool calls, task progress, avatar
+ * state, config, chat — rides this bus.
+ *
+ * Design notes:
+ *  - `id` correlates request/response; a response sets `replyTo` to the request id.
+ *  - Broadcasts (task.*, avatar.state, capability.updated) are fire-and-forget.
+ *  - Every payload has a zod schema in `payloadSchemas`; `parseEnvelope` validates
+ *    the envelope shape and the payload for its kind in one step.
+ */
+
+export const PROTOCOL_VERSION = 1 as const;
+
+export const wsRoleSchema = z.enum(['main', 'overlay', 'chat', 'daemon']);
+export type WsRole = z.infer<typeof wsRoleSchema>;
+
+// ---------------------------------------------------------------------------
+// Per-kind payload schemas.
+// ---------------------------------------------------------------------------
+
+const helloPayload = z.object({
+  role: wsRoleSchema,
+  /** One-time token minted by the daemon and handed to clients out of band. */
+  token: z.string(),
+  clientVersion: z.string().optional(),
+});
+
+const welcomePayload = z.object({
+  /** Daemon-assigned connection id. */
+  connectionId: z.string(),
+  daemonVersion: z.string(),
+  /** Whether the daemon is running natively or inside WSL. */
+  host: z.enum(['windows', 'wsl', 'unknown']),
+});
+
+const voiceToolCallPayload = z.object({
+  name: z.string(),
+  args: z.unknown(),
+});
+
+const voiceToolResultPayload = z.object({
+  /** JSON-serializable result handed back to the voice model. */
+  result: z.unknown(),
+  isError: z.boolean().default(false),
+});
+
+const voiceTranscriptPayload = z.object({
+  role: z.enum(['user', 'assistant']),
+  text: z.string(),
+  final: z.boolean(),
+});
+
+const voiceStatePayload = z.object({
+  state: z.enum(['idle', 'listening', 'thinking', 'talking', 'error']),
+});
+
+const voiceInjectPayload = z.object({
+  /** Text for the provider to voice (progress update, side note). */
+  text: z.string(),
+  /** If true, speak immediately; otherwise queue around the user's turn. */
+  speakNow: z.boolean().default(false),
+});
+
+const voiceRecyclePayload = z.object({
+  reason: z.enum(['session_limit', 'persona_change', 'manual']).default('manual'),
+});
+
+const taskCreatedPayload = z.object({ task: taskSchema });
+const taskProgressPayload = z.object({
+  taskId: z.string(),
+  progress: taskProgressSchema,
+});
+const taskDonePayload = z.object({ task: taskSchema });
+const taskErrorPayload = z.object({ taskId: z.string(), error: z.string() });
+const taskCancelledPayload = z.object({ taskId: z.string() });
+
+const avatarStatePayload = z.object({
+  state: avatarStateSchema,
+  emote: z.string().optional(),
+});
+
+const capabilityUpdatedPayload = z.object({
+  manifest: capabilityManifestSchema,
+});
+
+const configGetPayload = z.object({ key: z.string().optional() });
+const configSetPayload = z.object({ key: z.string(), value: z.unknown() });
+const configChangedPayload = z.object({
+  key: z.string(),
+  value: z.unknown(),
+});
+
+const chatUserMessagePayload = z.object({
+  text: z.string(),
+  /** Optional client-supplied id to correlate the streamed reply. */
+  messageId: z.string().optional(),
+});
+const chatAssistantDeltaPayload = z.object({
+  messageId: z.string().optional(),
+  delta: z.string(),
+});
+const chatAssistantDonePayload = z.object({
+  messageId: z.string().optional(),
+  text: z.string(),
+});
+
+const pingPayload = z.object({}).default({});
+const pongPayload = z.object({}).default({});
+const shutdownPayload = z.object({ reason: z.string().optional() });
+const errorPayload = z.object({
+  message: z.string(),
+  /** Machine-readable code, e.g. 'auth_error', 'bad_message'. */
+  code: z.string().optional(),
+});
+
+/**
+ * The registry mapping every message kind to its payload schema.
+ * Adding a message = add one entry here and the union/types update automatically.
+ */
+export const payloadSchemas = {
+  hello: helloPayload,
+  welcome: welcomePayload,
+
+  'voice.tool_call': voiceToolCallPayload,
+  'voice.tool_result': voiceToolResultPayload,
+  'voice.transcript': voiceTranscriptPayload,
+  'voice.state': voiceStatePayload,
+  'voice.inject': voiceInjectPayload,
+  'voice.recycle': voiceRecyclePayload,
+
+  'task.created': taskCreatedPayload,
+  'task.progress': taskProgressPayload,
+  'task.done': taskDonePayload,
+  'task.error': taskErrorPayload,
+  'task.cancelled': taskCancelledPayload,
+
+  'avatar.state': avatarStatePayload,
+
+  'capability.updated': capabilityUpdatedPayload,
+
+  'config.get': configGetPayload,
+  'config.set': configSetPayload,
+  'config.changed': configChangedPayload,
+
+  'chat.user_message': chatUserMessagePayload,
+  'chat.assistant_delta': chatAssistantDeltaPayload,
+  'chat.assistant_done': chatAssistantDonePayload,
+
+  ping: pingPayload,
+  pong: pongPayload,
+  shutdown: shutdownPayload,
+  error: errorPayload,
+} as const;
+
+export type WsMessageKind = keyof typeof payloadSchemas;
+
+export const wsMessageKindSchema = z.enum(
+  Object.keys(payloadSchemas) as [WsMessageKind, ...WsMessageKind[]],
+);
+
+/** Payload TypeScript type for a given kind. */
+export type PayloadOf<K extends WsMessageKind> = z.infer<(typeof payloadSchemas)[K]>;
+
+// ---------------------------------------------------------------------------
+// The envelope.
+// ---------------------------------------------------------------------------
+
+export interface WsEnvelope<K extends WsMessageKind = WsMessageKind> {
+  v: typeof PROTOCOL_VERSION;
+  id: string;
+  kind: K;
+  ts: number;
+  payload: PayloadOf<K>;
+  /** Set on responses to correlate with the originating request's `id`. */
+  replyTo?: string;
+}
+
+/** Base envelope schema (payload validated separately per-kind). */
+const envelopeBaseSchema = z.object({
+  v: z.literal(PROTOCOL_VERSION),
+  id: z.string(),
+  kind: wsMessageKindSchema,
+  ts: z.number(),
+  payload: z.unknown(),
+  replyTo: z.string().optional(),
+});
+
+// ---------------------------------------------------------------------------
+// Build / parse helpers.
+// ---------------------------------------------------------------------------
+
+/**
+ * Deterministic id generator injected by callers.
+ *
+ * The shared package stays environment-agnostic (no crypto/Date import) so it
+ * works identically in the daemon, Electron main, and the renderer. Callers pass
+ * an id factory and timestamp.
+ */
+export interface EnvelopeContext {
+  newId: () => string;
+  now: () => number;
+}
+
+export function makeEnvelope<K extends WsMessageKind>(
+  ctx: EnvelopeContext,
+  kind: K,
+  payload: PayloadOf<K>,
+  opts?: { replyTo?: string },
+): WsEnvelope<K> {
+  // Validate the payload as we build so we never emit a malformed message.
+  const parsed = payloadSchemas[kind].parse(payload) as PayloadOf<K>;
+  return {
+    v: PROTOCOL_VERSION,
+    id: ctx.newId(),
+    kind,
+    ts: ctx.now(),
+    payload: parsed,
+    ...(opts?.replyTo ? { replyTo: opts.replyTo } : {}),
+  };
+}
+
+export class ProtocolError extends Error {
+  constructor(
+    message: string,
+    readonly code: 'bad_json' | 'bad_envelope' | 'bad_payload',
+  ) {
+    super(message);
+    this.name = 'ProtocolError';
+  }
+}
+
+/**
+ * Parse and fully validate a raw incoming message (string or object).
+ * Throws ProtocolError on any malformed input.
+ */
+export function parseEnvelope(raw: unknown): WsEnvelope {
+  let obj: unknown = raw;
+  if (typeof raw === 'string') {
+    try {
+      obj = JSON.parse(raw);
+    } catch {
+      throw new ProtocolError('Message is not valid JSON', 'bad_json');
+    }
+  }
+
+  const base = envelopeBaseSchema.safeParse(obj);
+  if (!base.success) {
+    throw new ProtocolError(
+      `Invalid envelope: ${base.error.issues.map((i) => i.message).join('; ')}`,
+      'bad_envelope',
+    );
+  }
+
+  const kind = base.data.kind;
+  const payloadResult = payloadSchemas[kind].safeParse(base.data.payload);
+  if (!payloadResult.success) {
+    throw new ProtocolError(
+      `Invalid payload for kind "${kind}": ${payloadResult.error.issues
+        .map((i) => `${i.path.join('.')} ${i.message}`)
+        .join('; ')}`,
+      'bad_payload',
+    );
+  }
+
+  return {
+    v: base.data.v,
+    id: base.data.id,
+    kind,
+    ts: base.data.ts,
+    payload: payloadResult.data,
+    ...(base.data.replyTo ? { replyTo: base.data.replyTo } : {}),
+  } as WsEnvelope;
+}
+
+/** Serialize an envelope to a wire string. */
+export function serializeEnvelope(env: WsEnvelope): string {
+  return JSON.stringify(env);
+}
+
+/** Type guard narrowing an envelope to a specific kind. */
+export function isKind<K extends WsMessageKind>(
+  env: WsEnvelope,
+  kind: K,
+): env is WsEnvelope<K> {
+  return env.kind === kind;
+}

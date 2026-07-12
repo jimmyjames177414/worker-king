@@ -1,0 +1,24 @@
+{
+  "name": "worker-king",
+  "version": "0.0.0",
+  "private": true,
+  "description": "WorkerKing — a personal Jarvis-style AI assistant for Windows, powered by Claude Code.",
+  "license": "MIT",
+  "packageManager": "pnpm@10.33.0",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "pnpm -r --filter \"./packages/*\" run build",
+    "typecheck": "pnpm -r run typecheck",
+    "test": "pnpm -r run test",
+    "test:headless": "pnpm --filter @workerking/shared --filter @workerking/core --filter @workerking/voice-providers run test",
+    "daemon": "pnpm --filter @workerking/core run start",
+    "app": "pnpm --filter @workerking/app run dev",
+    "clean": "pnpm -r exec rm -rf dist node_modules/.cache"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.9"
+  }
+}
