@@ -1,5 +1,6 @@
 import { connectToDaemon } from '../shared/wsClient.js';
 import { AvatarController } from './AvatarController.js';
+import { VoiceHost } from './VoiceHost.js';
 
 /**
  * Overlay renderer entry. Wires:
@@ -10,7 +11,11 @@ import { AvatarController } from './AvatarController.js';
  *    we just surface a custom event other phases hook)
  */
 const bridge = (window as unknown as {
-  workerking: { setClickThrough(on: boolean): void };
+  workerking: {
+    setClickThrough(on: boolean): void;
+    mintRealtimeKey(): Promise<string>;
+    onPushToTalk(cb: () => void): void;
+  };
 }).workerking;
 
 async function main(): Promise<void> {
@@ -35,7 +40,7 @@ async function main(): Promise<void> {
   client.on('avatar.state', (env) => avatar.set(env.payload.state));
   client.on('welcome', () => avatar.set('idle'));
 
-  // Reflect the voice provider's own state onto the avatar in later phases.
+  // Reflect the voice provider's own state onto the avatar.
   client.on('voice.state', (env) => {
     const map: Record<string, Parameters<AvatarController['set']>[0]> = {
       idle: 'idle',
@@ -46,6 +51,11 @@ async function main(): Promise<void> {
     };
     avatar.set(map[env.payload.state] ?? 'idle');
   });
+
+  // Voice: push-to-talk (global hotkey) toggles a GPT Realtime session.
+  new VoiceHost(client, bridge, () =>
+    'You are WorkerKing, a helpful desktop voice assistant. Keep spoken replies concise and natural.',
+  );
 }
 
 main();

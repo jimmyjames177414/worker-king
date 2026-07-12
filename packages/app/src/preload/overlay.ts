@@ -18,6 +18,12 @@ const api = {
   getConnection: (): Promise<WorkerKingConnection | undefined> =>
     ipcRenderer.invoke('wk:get-connection'),
   setClickThrough: (on: boolean): void => ipcRenderer.send('wk:set-click-through', on),
+  /** Mint an ephemeral OpenAI Realtime key (real key stays in main). */
+  mintRealtimeKey: (): Promise<string> => ipcRenderer.invoke('wk:mint-realtime-key'),
+  /** Subscribe to the global push-to-talk hotkey (fired from main). */
+  onPushToTalk: (cb: () => void): void => {
+    ipcRenderer.on('wk:push-to-talk', () => cb());
+  },
 };
 
 contextBridge.exposeInMainWorld('workerking', api);

@@ -22,12 +22,17 @@ import { captureScreen } from './ScreenCapture.js';
 interface AppConfig {
   hotkey: string;
   claudeHost: 'auto' | 'windows' | 'wsl';
+  openaiModel: string;
   [k: string]: unknown;
 }
 
 const config = new Store<AppConfig>({
   name: 'config',
-  defaults: { hotkey: 'Control+Shift+Space', claudeHost: 'auto' },
+  defaults: {
+    hotkey: 'Control+Shift+Space',
+    claudeHost: 'auto',
+    openaiModel: 'gpt-realtime-mini',
+  },
 });
 
 let supervisor: DaemonSupervisor | undefined;
@@ -69,10 +74,13 @@ async function boot(): Promise<void> {
   });
   daemonClient.connect();
 
-  registerIpc((win) => {
-    if (!connection) return undefined;
-    const role = win === overlay ? 'overlay' : 'chat';
-    return { connection, role };
+  registerIpc({
+    resolve: (win) => {
+      if (!connection) return undefined;
+      const role = win === overlay ? 'overlay' : 'chat';
+      return { connection, role };
+    },
+    getModel: () => config.get('openaiModel'),
   });
 
   overlay = createOverlayWindow();
@@ -94,9 +102,9 @@ async function boot(): Promise<void> {
 
   const hotkey = config.get('hotkey');
   globalShortcut.register(hotkey, () => {
-    // Phase 0: hotkey toggles the chat window. Phase 2 repurposes it for
-    // push-to-talk on the overlay.
-    if (chat) toggleChatWindow(chat);
+    // Push-to-talk: signal the overlay to toggle the voice session. (Chat is
+    // opened from the tray or by clicking the avatar.)
+    overlay?.webContents.send('wk:push-to-talk');
   });
 }
 

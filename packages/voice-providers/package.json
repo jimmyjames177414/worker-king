@@ -17,6 +17,7 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
+    "@openai/agents-realtime": "^0.13.2",
     "@workerking/shared": "workspace:*",
     "zod": "^3.24.1"
   },
