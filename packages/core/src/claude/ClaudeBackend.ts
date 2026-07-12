@@ -127,6 +127,57 @@ export class ClaudeBackend implements Brain {
     return streamed.length > 0 ? streamed : (resultText ?? '');
   }
 
+  /**
+   * TaskRunner implementation for delegated (voice) work: streams richer events
+   * (text deltas + tool_use starts + final result) so the TaskManager can map
+   * them to spoken progress. Honors the abort signal for cancel_task.
+   */
+  async run(
+    prompt: string,
+    events: {
+      onDelta(text: string): void;
+      onToolUse(name: string): void;
+      onDone(summary: string): void;
+      onError(err: Error): void;
+    },
+    signal: AbortSignal,
+  ): Promise<void> {
+    const abort = new AbortController();
+    const onAbort = () => abort.abort();
+    signal.addEventListener('abort', onAbort, { once: true });
+
+    const options: Options = { ...this.buildOptions(), abortController: abort };
+    let resultText = '';
+    try {
+      for await (const msg of this.opts.queryFn({ prompt, options })) {
+        switch (msg.type) {
+          case 'stream_event': {
+            const delta = extractTextDelta(msg.event);
+            if (delta) events.onDelta(delta);
+            break;
+          }
+          case 'assistant': {
+            for (const name of extractToolUses(msg)) events.onToolUse(name);
+            break;
+          }
+          case 'result': {
+            this.sessionId = msg.session_id;
+            if (msg.subtype === 'success') resultText = msg.result;
+            else events.onError(this.normalizeError(new Error(`Claude ended with "${msg.subtype}"`)));
+            break;
+          }
+          default:
+            break;
+        }
+      }
+      if (!signal.aborted) events.onDone(resultText || 'Done.');
+    } catch (err) {
+      if (!signal.aborted) events.onError(this.normalizeError(err));
+    } finally {
+      signal.removeEventListener('abort', onAbort);
+    }
+  }
+
   /** Reset conversation continuity (start a fresh Claude session next message). */
   resetSession(): void {
     this.sessionId = undefined;
@@ -166,4 +217,12 @@ export function extractTextDelta(event: unknown): string | undefined {
     return e.delta.text ?? undefined;
   }
   return undefined;
+}
+
+/** Extract tool_use block names from an assistant SDK message. */
+export function extractToolUses(msg: unknown): string[] {
+  const m = msg as { message?: { content?: Array<{ type?: string; name?: string }> } };
+  const content = m?.message?.content;
+  if (!Array.isArray(content)) return [];
+  return content.filter((b) => b.type === 'tool_use' && b.name).map((b) => b.name as string);
 }

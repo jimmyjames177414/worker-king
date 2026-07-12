@@ -1,11 +1,14 @@
+import type { TaskRunner, TaskRunEvents } from '../tasks/TaskManager.js';
+
 /**
- * Brain — the pluggable text-response engine behind the chat path.
+ * Brain — the pluggable engine behind both the chat path (`respond`) and the
+ * voice-delegation path (`run`, from TaskRunner).
  *
- * Phase 0 ships EchoBrain. Phase 1 replaces it with ClaudeBackend (the Claude
- * Agent SDK wrapper) implementing the same interface, so the Supervisor and WS
- * plumbing don't change when the real brain arrives.
+ * Phase 0 ships EchoBrain. Phase 1+ uses ClaudeBackend (the Claude Agent SDK
+ * wrapper), so the Supervisor, TaskManager, and WS plumbing don't change when the
+ * real brain arrives.
  */
-export interface Brain {
+export interface Brain extends TaskRunner {
   readonly id: string;
   /**
    * Produce a response to `text`, streaming deltas via `onDelta`.
@@ -49,6 +52,11 @@ export class DeferredBrain implements Brain {
     const brain = await this.waitForBrain();
     return brain.respond(text, onDelta);
   }
+
+  async run(prompt: string, events: TaskRunEvents, signal: AbortSignal): Promise<void> {
+    const brain = await this.waitForBrain();
+    return brain.run(prompt, events, signal);
+  }
 }
 
 /**
@@ -70,5 +78,11 @@ export class EchoBrain implements Brain {
       onDelta(chunk);
     }
     return acc;
+  }
+
+  async run(prompt: string, events: TaskRunEvents, signal: AbortSignal): Promise<void> {
+    if (signal.aborted) return;
+    events.onDelta(prompt);
+    events.onDone(`Echo task complete: ${prompt}`);
   }
 }

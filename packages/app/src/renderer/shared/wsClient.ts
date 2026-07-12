@@ -114,6 +114,34 @@ export class WsClient {
     return () => set.delete(handler as Handler);
   }
 
+  /**
+   * Send a message and await the reply whose `replyTo` matches its id
+   * (e.g. voice.tool_call → voice.tool_result). Rejects on timeout.
+   */
+  request<K extends WsMessageKind>(
+    kind: K,
+    payload: PayloadOf<K>,
+    timeoutMs = 20000,
+  ): Promise<WsEnvelope> {
+    const env = makeEnvelope(browserCtx, kind, payload);
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        off();
+        reject(new Error(`request "${kind}" timed out`));
+      }, timeoutMs);
+      const off = this.onAny((reply) => {
+        if (reply.replyTo === env.id) {
+          clearTimeout(timer);
+          off();
+          resolve(reply);
+        }
+      });
+      const wire = serializeEnvelope(env);
+      if (this.ready && this.ws?.readyState === WebSocket.OPEN) this.ws.send(wire);
+      else this.outbox.push(wire);
+    });
+  }
+
   onAny(handler: Handler): () => void {
     this.anyHandlers.add(handler);
     return () => this.anyHandlers.delete(handler);

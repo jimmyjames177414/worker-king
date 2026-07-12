@@ -148,4 +148,37 @@ describe('core daemon (Phase 0)', () => {
     }
     c.close();
   });
+
+  it('delegates a voice tool call and streams task.* to completion', async () => {
+    const c = await MockClient.connect(daemon.port, daemon.token, 'overlay');
+    c.send('voice.tool_call', { name: 'delegate_to_worker', args: { task: 'rename my files' } });
+
+    // Collect the whole exchange up to completion (order: task.created broadcast,
+    // voice.tool_result reply, then async task.* as the echo brain runs).
+    const envs = await c.collectUntil('task.done');
+
+    const result = envs.find((e) => e.kind === 'voice.tool_result') as
+      | WsEnvelope<'voice.tool_result'>
+      | undefined;
+    const payload = result?.payload.result as { status: string; task_id: string };
+    expect(payload.status).toBe('started');
+    expect(payload.task_id).toBeTruthy();
+
+    expect(envs.find((e) => e.kind === 'task.created')).toBeDefined();
+    const done = envs.find((e) => e.kind === 'task.done') as WsEnvelope<'task.done'> | undefined;
+    expect(done?.payload.task.state).toBe('done');
+    expect(done?.payload.task.result?.summary).toContain('Echo task complete');
+    c.close();
+  });
+
+  it('rejects an unknown voice tool', async () => {
+    const c = await MockClient.connect(daemon.port, daemon.token, 'overlay');
+    c.send('voice.tool_call', { name: 'nonsense', args: {} });
+    const envs = await c.collectUntil('voice.tool_result');
+    const result = envs.find((e) => e.kind === 'voice.tool_result') as
+      | WsEnvelope<'voice.tool_result'>
+      | undefined;
+    expect(result?.payload.isError).toBe(true);
+    c.close();
+  });
 });

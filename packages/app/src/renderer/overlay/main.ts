@@ -73,8 +73,15 @@ async function main(): Promise<void> {
 
   // Voice: push-to-talk (global hotkey) toggles a GPT Realtime session.
   const voiceHost = new VoiceHost(client, bridge, () => {
-    const base =
-      'You are WorkerKing, a helpful desktop voice assistant. Keep spoken replies concise and natural.';
+    const base = [
+      'You are WorkerKing, a helpful desktop voice assistant. Keep spoken replies concise and natural.',
+      'You are a thin voice layer over a capable worker (Claude Code). Handle greetings and small talk',
+      'yourself, but for ANYTHING substantive — running commands, editing files, answering questions that',
+      'need tools — first say a short filler like "On it" or "Let me take care of that", then call',
+      'delegate_to_worker with the task. Progress and results will be spoken to the user automatically as',
+      'they arrive; read them out naturally. Use check_task_status if the user asks how it\'s going, and',
+      'cancel_task if they want to stop.',
+    ].join(' ');
     return capabilitySummary ? `${base}\n\n${capabilitySummary}` : base;
   });
 

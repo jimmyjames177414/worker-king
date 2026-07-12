@@ -2,6 +2,8 @@ import type { WsServer, WsClient } from '../ws/server.js';
 import type { WsEnvelope } from '@workerking/shared';
 import type { ConfigStore } from '../config/ConfigStore.js';
 import type { Brain } from '../brain/Brain.js';
+import { TaskManager } from '../tasks/TaskManager.js';
+import { daemonEnvelopeContext } from '../util/ids.js';
 
 /**
  * Supervisor — the daemon's message router.
@@ -14,11 +16,27 @@ import type { Brain } from '../brain/Brain.js';
  * TaskManager, and capability manifest broadcasts — all hung off this same class.
  */
 export class Supervisor {
+  private readonly tasks: TaskManager;
+
   constructor(
     private readonly server: WsServer,
     private readonly config: ConfigStore,
     private readonly brain: Brain,
   ) {
+    // TaskManager drives delegated (voice) work; its events become task.* broadcasts.
+    this.tasks = new TaskManager({
+      runner: brain,
+      emit: {
+        created: (task) => server.broadcast('task.created', { task }),
+        progress: (taskId, progress) => server.broadcast('task.progress', { taskId, progress }),
+        done: (task) => server.broadcast('task.done', { task }),
+        error: (taskId, error) => server.broadcast('task.error', { taskId, error }),
+        cancelled: (taskId) => server.broadcast('task.cancelled', { taskId }),
+      },
+      now: daemonEnvelopeContext.now,
+      newId: daemonEnvelopeContext.newId,
+    });
+
     this.server.onMessage((client, env) => {
       // Route by kind; unknown kinds are ignored (forward-compatible).
       void this.dispatch(client, env);
@@ -34,6 +52,8 @@ export class Supervisor {
     switch (env.kind) {
       case 'chat.user_message':
         return this.handleChat(client, env as WsEnvelope<'chat.user_message'>);
+      case 'voice.tool_call':
+        return this.handleVoiceToolCall(client, env as WsEnvelope<'voice.tool_call'>);
       case 'config.get':
         return this.handleConfigGet(client, env as WsEnvelope<'config.get'>);
       case 'config.set':
@@ -41,6 +61,41 @@ export class Supervisor {
       default:
         // Not handled in this phase.
         return;
+    }
+  }
+
+  /**
+   * The chat-supervisor tool router. The thin voice model calls these; each replies
+   * fast (delegate returns a task_id immediately) so the conversation stays fluid,
+   * and progress/results flow asynchronously as task.* broadcasts.
+   */
+  private handleVoiceToolCall(client: WsClient, env: WsEnvelope<'voice.tool_call'>): void {
+    const { name, args } = env.payload;
+    const a = (args ?? {}) as Record<string, unknown>;
+    const reply = (result: unknown, isError = false) =>
+      client.send('voice.tool_result', { result, isError }, { replyTo: env.id });
+
+    switch (name) {
+      case 'delegate_to_worker': {
+        const prompt = String(a.task ?? a.prompt ?? a.request ?? '').trim();
+        if (!prompt) return reply({ error: 'No task text provided.' }, true);
+        const taskId = this.tasks.create(prompt);
+        return reply({ status: 'started', task_id: taskId });
+      }
+      case 'check_task_status': {
+        const task = this.tasks.check(String(a.task_id ?? ''));
+        return reply(
+          task
+            ? { state: task.state, latest: task.progress.at(-1)?.text ?? 'working on it' }
+            : { state: 'unknown', note: 'no such task (it may have finished)' },
+        );
+      }
+      case 'cancel_task': {
+        const ok = this.tasks.cancel(String(a.task_id ?? ''));
+        return reply({ cancelled: ok });
+      }
+      default:
+        return reply({ error: `Unknown tool: ${name}` }, true);
     }
   }
 

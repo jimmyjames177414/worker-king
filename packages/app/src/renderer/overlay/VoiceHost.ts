@@ -3,7 +3,7 @@ import {
   createRealtimeSessionFactory,
   type VoiceProvider,
 } from '@workerking/voice-providers';
-import type { JsonValue } from '@workerking/shared';
+import { isKind, type JsonValue } from '@workerking/shared';
 import type { WsClient } from '../shared/wsClient.js';
 
 /** The overlay preload bridge surface VoiceHost needs. */
@@ -39,7 +39,58 @@ export class VoiceHost {
     });
     this.ws.send('config.get', { key: 'openaiModel' });
 
+    // Spoken progress + final results from delegated tasks (turn-gated inside the
+    // provider so they don't collide with the user speaking).
+    this.ws.on('task.progress', (env) => {
+      void this.provider?.injectAssistantContext(env.payload.progress.text);
+    });
+    this.ws.on('task.done', (env) => {
+      const summary = env.payload.task.result?.summary;
+      if (summary) void this.provider?.injectAssistantContext(summary, { speakNow: true });
+    });
+    this.ws.on('task.error', (env) => {
+      void this.provider?.injectAssistantContext(`That task ran into a problem: ${env.payload.error}`, {
+        speakNow: true,
+      });
+    });
+
     this.bridge.onPushToTalk(() => void this.toggle());
+  }
+
+  /** The chat-supervisor tools the thin voice model delegates through. */
+  private supervisorTools() {
+    return [
+      {
+        name: 'delegate_to_worker',
+        description:
+          'Hand a substantive task to the worker (Claude Code). Returns a task_id immediately; ' +
+          'progress and the final result are spoken to the user as they arrive. Use for anything ' +
+          'beyond small talk. Say a brief filler like "On it" BEFORE calling this.',
+        parameters: {
+          type: 'object',
+          properties: { task: { type: 'string', description: 'What to do, in plain language.' } },
+          required: ['task'],
+        },
+      },
+      {
+        name: 'check_task_status',
+        description: 'Check how a running task is going.',
+        parameters: {
+          type: 'object',
+          properties: { task_id: { type: 'string' } },
+          required: ['task_id'],
+        },
+      },
+      {
+        name: 'cancel_task',
+        description: 'Stop a running task.',
+        parameters: {
+          type: 'object',
+          properties: { task_id: { type: 'string' } },
+          required: ['task_id'],
+        },
+      },
+    ];
   }
 
   async toggle(): Promise<void> {
@@ -59,11 +110,13 @@ export class VoiceHost {
     try {
       await provider.start({
         systemPrompt: this.getPersona(),
-        tools: [], // voice delegation tools arrive in Phase 3
+        tools: this.supervisorTools(),
         delegate: {
           onToolCall: async (name: string, args: JsonValue): Promise<JsonValue> => {
-            this.ws.send('voice.tool_call', { name, args });
-            return {}; // Phase 3 correlates the daemon's voice.tool_result reply
+            // Round-trip to the daemon Supervisor and return its result to the model.
+            const reply = await this.ws.request('voice.tool_call', { name, args });
+            if (isKind(reply, 'voice.tool_result')) return reply.payload.result as JsonValue;
+            return {};
           },
           onUserTranscript: (text, final) =>
             this.ws.send('voice.transcript', { role: 'user', text, final }),

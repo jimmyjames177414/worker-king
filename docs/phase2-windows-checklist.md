@@ -60,3 +60,15 @@ here on Windows. Screen awareness (Track S) is already verified end-to-end in-co
 ### Capability discovery (verified in-container; confirm on Windows)
 - [ ] Add a new `SKILL.md` under `~/.claude/skills/...` → within a moment the daemon
       re-broadcasts the manifest and the voice model can route to it (no restart).
+
+## Phase 3 — voice delegation (daemon side verified in-container; confirm spoken)
+
+The full delegate → progress → done path is verified end-to-end against real Claude in
+the container (delegate_to_worker → task_id → task.progress → task.done "51"). On Windows,
+confirm the *spoken* experience:
+- [ ] Say "rename my screenshots by date" (or any real task) → WorkerKing says a filler
+      ("On it"), you can keep talking, and it speaks progress then the final result.
+- [ ] Ask "how's that going?" mid-task → it answers from check_task_status.
+- [ ] Say "stop that" → cancel_task aborts the run.
+- [ ] Talking over a spoken result interrupts it (barge-in), and progress updates don't
+      trample your speech (turn-gated injection).
