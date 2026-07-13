@@ -20,12 +20,25 @@ import type { MemoryStore, MemoryScope } from '../memory/MemoryStore.js';
 
 export const WORKERKING_MCP_SERVER_NAME = 'workerking';
 
+export interface ProactiveNotice {
+  text: string;
+  level?: 'info' | 'warn' | 'success';
+  speak?: boolean;
+  source?: string;
+}
+
 export interface WorkerKingToolDeps {
   config: Pick<ConfigStore, 'get'>;
   screen: ScreenContextProvider;
   /** Optional memory store; enables the `remember` tool when present. */
   memory?: MemoryStore;
-  /** Audit sink; every screen/memory access is recorded. */
+  /** Surface a proactive heads-up (toast + optional speech); enables `notify`. */
+  proactiveNotify?: (notice: ProactiveNotice) => void;
+  /** Schedule a reminder, returning its id; enables `set_reminder`. */
+  scheduleReminder?: (message: string, fireAtMs: number) => string;
+  /** Wall clock for reminder timing (injected in tests). */
+  now?: () => number;
+  /** Audit sink; every screen/memory/proactive access is recorded. */
   audit?: (event: { tool: string; detail: string }) => void;
 }
 
@@ -134,12 +147,65 @@ export function buildMemoryTool(deps: WorkerKingToolDeps) {
   );
 }
 
+/** The `notify` tool: Claude proactively surfaces a heads-up (toast + optional speech). */
+export function buildNotifyTool(deps: WorkerKingToolDeps) {
+  return tool(
+    'notify',
+    'Proactively surface a short heads-up to the user (a desktop toast, spoken aloud by default). ' +
+      'Use to tell them something worth their attention now — a task finished, something needs them.',
+    {
+      text: z.string().describe('The heads-up, phrased for the user.'),
+      level: z.enum(['info', 'warn', 'success']).default('info'),
+      speak: z.boolean().default(true),
+    },
+    async (args) => {
+      deps.audit?.({ tool: 'notify', detail: args.text });
+      deps.proactiveNotify?.({ text: args.text, level: args.level, speak: args.speak, source: 'notify-tool' });
+      return { content: [{ type: 'text' as const, text: 'Notified the user.' }] };
+    },
+  );
+}
+
+/** The `set_reminder` tool: schedule a message to surface later. */
+export function buildReminderTool(deps: WorkerKingToolDeps) {
+  const now = () => (deps.now ?? (() => Date.now()))();
+  return tool(
+    'set_reminder',
+    'Remind the user of something later. Give either delaySeconds (from now) or atISO (an absolute ' +
+      'time). The reminder is spoken + toasted when it fires and survives restarts.',
+    {
+      message: z.string().describe('What to remind them.'),
+      delaySeconds: z.number().int().positive().optional(),
+      atISO: z.string().optional().describe('Absolute ISO 8601 time, e.g. 2026-07-13T17:00:00Z.'),
+    },
+    async (args) => {
+      if (deps.config.get('remindersEnabled') === false || !deps.scheduleReminder) {
+        return { isError: true, content: [{ type: 'text' as const, text: 'Reminders are turned off.' }] };
+      }
+      let fireAt: number | undefined;
+      if (args.delaySeconds) fireAt = now() + args.delaySeconds * 1000;
+      else if (args.atISO) {
+        const t = Date.parse(args.atISO);
+        if (!Number.isNaN(t)) fireAt = t;
+      }
+      if (!fireAt || fireAt <= now()) {
+        return { isError: true, content: [{ type: 'text' as const, text: 'Need a valid future time (delaySeconds or atISO).' }] };
+      }
+      deps.audit?.({ tool: 'set_reminder', detail: `${args.message} @ ${new Date(fireAt).toISOString()}` });
+      const id = deps.scheduleReminder(args.message, fireAt);
+      return { content: [{ type: 'text' as const, text: `Reminder set (${id}).` }] };
+    },
+  );
+}
+
 /** The MCP server config to hand to ClaudeBackend `mcpServers`. */
 export function createWorkerKingToolServer(deps: WorkerKingToolDeps): McpServerConfig {
   const { getActiveWindow, captureScreen } = buildScreenTools(deps);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const tools: Array<SdkMcpToolDefinition<any>> = [getActiveWindow, captureScreen];
   if (deps.memory) tools.push(buildMemoryTool(deps));
+  if (deps.proactiveNotify) tools.push(buildNotifyTool(deps));
+  if (deps.scheduleReminder) tools.push(buildReminderTool(deps));
   return createSdkMcpServer({
     name: WORKERKING_MCP_SERVER_NAME,
     version: '0.0.0',
@@ -152,4 +218,6 @@ export const WORKERKING_TOOL_ALLOWLIST = [
   `mcp__${WORKERKING_MCP_SERVER_NAME}__get_active_window`,
   `mcp__${WORKERKING_MCP_SERVER_NAME}__capture_screen`,
   `mcp__${WORKERKING_MCP_SERVER_NAME}__remember`,
+  `mcp__${WORKERKING_MCP_SERVER_NAME}__notify`,
+  `mcp__${WORKERKING_MCP_SERVER_NAME}__set_reminder`,
 ];

@@ -18,6 +18,7 @@ const bridge = (window as unknown as {
     mintRealtimeKey(): Promise<string>;
     onPushToTalk(cb: () => void): void;
     onReconnect(cb: () => void): void;
+    onSpeak(cb: (text: string) => void): void;
   };
 }).workerking;
 
@@ -101,6 +102,18 @@ async function main(): Promise<void> {
     if (env.payload.key === 'wakeWordEnabled') applyWakeConfig(env.payload.value);
   });
   client.send('config.get', { key: 'wakeWordEnabled' });
+
+  // Proactive notices (reminders, watch heads-ups, notify tool): show a caption
+  // and speak them if a voice session is active.
+  client.on('proactive.notify', (env) => {
+    captions?.show('assistant', env.payload.text);
+    if (env.payload.speak) void voiceHost.speak(env.payload.text);
+  });
+  // Explain-hotkey replies routed from main.
+  bridge.onSpeak((text) => {
+    captions?.show('assistant', text);
+    void voiceHost.speak(text);
+  });
 }
 
 main();

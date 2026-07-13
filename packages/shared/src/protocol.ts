@@ -99,6 +99,17 @@ const screenCaptureResultPayload = z.object({
   error: z.string().optional(),
 });
 
+// Proactive/ambient: WorkerKing surfaces something unprompted (reminders, watch
+// heads-ups, or a `notify` tool call). Overlay speaks it; main shows a toast.
+const proactiveNotifyPayload = z.object({
+  text: z.string(),
+  level: z.enum(['info', 'warn', 'success']).default('info'),
+  /** Speak it aloud (vs. toast-only). */
+  speak: z.boolean().default(true),
+  /** Origin, for logging/UX, e.g. 'reminder' | 'watch' | 'notify-tool'. */
+  source: z.string().optional(),
+});
+
 const taskCreatedPayload = z.object({ task: taskSchema });
 const taskProgressPayload = z.object({
   taskId: z.string(),
@@ -165,6 +176,8 @@ export const payloadSchemas = {
 
   'screen.capture_request': screenCaptureRequestPayload,
   'screen.capture_result': screenCaptureResultPayload,
+
+  'proactive.notify': proactiveNotifyPayload,
 
   'task.created': taskCreatedPayload,
   'task.progress': taskProgressPayload,

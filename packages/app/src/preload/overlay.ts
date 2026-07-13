@@ -28,6 +28,10 @@ const api = {
   onReconnect: (cb: () => void): void => {
     ipcRenderer.on('wk:reconnect', () => cb());
   },
+  /** Main asks the overlay to speak text aloud (e.g. an explain-hotkey reply). */
+  onSpeak: (cb: (text: string) => void): void => {
+    ipcRenderer.on('wk:speak', (_e, text: string) => cb(text));
+  },
 };
 
 contextBridge.exposeInMainWorld('workerking', api);

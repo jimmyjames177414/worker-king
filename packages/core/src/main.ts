@@ -13,12 +13,16 @@ import { assemblePersonaFromCard, parseCharacterCard } from './persona/Character
 import { MemoryStore } from './memory/MemoryStore.js';
 import { InteractionLog } from './memory/InteractionLog.js';
 import { NightlyJob, createClaudeDistiller } from './memory/NightlyJob.js';
+import { ReminderStore } from './proactive/ReminderStore.js';
+import { ReminderScheduler } from './proactive/ReminderScheduler.js';
+import { ProactiveManager, defaultWatches } from './proactive/ProactiveManager.js';
 import { detectHost } from './util/host.js';
-import { newToken } from './util/ids.js';
+import { daemonEnvelopeContext, newToken } from './util/ids.js';
 
 // Process-wide memory store + interaction log (file-based under ~/.claude/workerking).
 const memory = new MemoryStore();
 const interactionLog = new InteractionLog();
+const reminderStore = new ReminderStore();
 
 /** The Voyager-pattern nudge: encourage Claude to grow its own skills. */
 const SELF_AUTHOR_NUDGE =
@@ -97,11 +101,41 @@ async function resolveBrain(
 ): Promise<void> {
   const cwd = config.get('claudeCwd') as string | undefined;
 
-  // Screen-awareness tools: capture runs in Electron main (reached over WS).
+  // Proactive channel: reminders + notify tool → proactive.notify broadcast.
+  const proactiveNotify = (n: {
+    text: string;
+    level?: 'info' | 'warn' | 'success';
+    speak?: boolean;
+    source?: string;
+  }) =>
+    server.broadcast('proactive.notify', {
+      text: n.text,
+      level: n.level ?? 'info',
+      speak: n.speak ?? true,
+      source: n.source,
+    });
+
+  const reminderScheduler = new ReminderScheduler({
+    store: reminderStore,
+    onFire: (r) => proactiveNotify({ text: r.message, source: 'reminder' }),
+  });
+  reminderScheduler.start();
+  registerDisposable({ stop: () => reminderScheduler.stop() });
+
+  const scheduleReminder = (message: string, fireAtMs: number): string => {
+    const id = daemonEnvelopeContext.newId();
+    const reminder = reminderStore.add(message, fireAtMs, id);
+    reminderScheduler.arm(reminder);
+    return id;
+  };
+
+  // Screen-awareness + memory + proactive tools (capture runs in Electron main).
   const toolServer = createWorkerKingToolServer({
     config,
     screen: new WsScreenContextProvider(server),
     memory,
+    proactiveNotify,
+    scheduleReminder,
     audit: (e) => process.stderr.write(`[workerking][tool] ${e.tool}: ${e.detail}\n`),
   });
   const claudeOpts = {
@@ -132,6 +166,17 @@ async function resolveBrain(
       const job = new NightlyJob({ memory, log: interactionLog, distill: distiller });
       job.start();
       registerDisposable({ stop: () => job.stop() });
+    }
+
+    // Proactive/ambient watches (spends Claude quota on a timer) — opt-in.
+    if (config.get('proactiveEnabled') === true) {
+      const manager = new ProactiveManager({
+        respond: (prompt) => createClaudeBackend({ cwd }).respond(prompt, () => {}),
+        notify: proactiveNotify,
+        watches: defaultWatches(),
+      });
+      manager.start();
+      registerDisposable({ stop: () => manager.stop() });
     }
   };
 

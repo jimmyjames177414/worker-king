@@ -61,6 +61,19 @@ here on Windows. Screen awareness (Track S) is already verified end-to-end in-co
 - [ ] Add a new `SKILL.md` under `~/.claude/skills/...` → within a moment the daemon
       re-broadcasts the manifest and the voice model can route to it (no restart).
 
+## Phase 7 — proactive & productivity (daemon side verified in-container; confirm on Windows)
+
+Reminders, the notify tool, and proactive watches are verified end-to-end against real Claude
+(Claude set a 1s reminder → it fired → proactive.notify; a watch produced a heads-up / stayed
+quiet on NONE). On Windows, confirm the surfaced experience:
+- [ ] "Remind me in 2 minutes to stretch" → 2 min later you get a Windows toast + (if voice is on)
+      it speaks the reminder. Survives an app restart.
+- [ ] Ask it to do something long → it can proactively `notify` you when done (toast + caption).
+- [ ] Turn on "Proactive heads-ups" in Settings (uses Claude quota on a timer) → it checks your
+      calendar every few minutes and speaks up before events.
+- [ ] Select text anywhere, press the "Explain selection" hotkey (default Ctrl+Shift+E) → WorkerKing
+      explains/acts on it (toast + spoken).
+
 ## Phase 5 — WSL bridge + free/local voice (orchestration verified; confirm on Windows)
 
 ### WSL bridge

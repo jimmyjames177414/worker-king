@@ -43,9 +43,12 @@ export class Settings {
       <label>Voice model<select data-cfg="openaiModel">${modelOpts}</select></label>
       <label>Claude host<select data-cfg="claudeHost">${hostOpts}</select></label>
       <label>Push-to-talk hotkey<input data-cfg="hotkey" value="${str('hotkey')}"></label>
+      <label>"Explain selection" hotkey<input data-cfg="explainHotkey" value="${str('explainHotkey')}"></label>
       <label class="check"><input type="checkbox" data-cfg="wakeWordEnabled" ${checked('wakeWordEnabled')}> Always-listening wake word</label>
       <label class="check"><input type="checkbox" data-cfg="screenAwareness" ${checked('screenAwareness')}> Let it see my screen</label>
       <label class="check"><input type="checkbox" data-cfg="memoryEnabled" ${checked('memoryEnabled')}> Remember things about me across sessions</label>
+      <label class="check"><input type="checkbox" data-cfg="remindersEnabled" ${checked('remindersEnabled')}> Allow reminders</label>
+      <label class="check"><input type="checkbox" data-cfg="proactiveEnabled" ${checked('proactiveEnabled')}> Proactive heads-ups (calendar etc.)</label>
       <hr>
       <label>OpenAI API key ${hasKey ? '<span class="ok">✓ saved</span>' : '<span class="warn">not set</span>'}
         <span class="row"><input type="password" id="openai-key" placeholder="sk-..."><button id="save-key">Save</button></span>

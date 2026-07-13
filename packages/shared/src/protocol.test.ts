@@ -83,6 +83,15 @@ describe('makeEnvelope + parseEnvelope round-trip', () => {
     expect(parsed.payload).toEqual(env.payload);
   });
 
+  it('round-trips a proactive.notify with defaults', () => {
+    const env = makeEnvelope(ctx, 'proactive.notify', { text: 'Standup in 5 minutes' });
+    if (isKind(env, 'proactive.notify')) {
+      expect(env.payload.level).toBe('info');
+      expect(env.payload.speak).toBe(true);
+    }
+    expect(parseEnvelope(serializeEnvelope(env)).payload).toEqual(env.payload);
+  });
+
   it('validates voice.audio_level bounds', () => {
     const env = makeEnvelope(ctx, 'voice.audio_level', { level: 0.5 });
     expect(parseEnvelope(serializeEnvelope(env)).payload).toEqual({ level: 0.5 });

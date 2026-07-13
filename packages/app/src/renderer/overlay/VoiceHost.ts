@@ -104,6 +104,11 @@ export class VoiceHost {
     else await this.start();
   }
 
+  /** Speak text aloud if a voice session is active (proactive notices, explain replies). */
+  async speak(text: string): Promise<void> {
+    if (this.provider) await this.provider.injectAssistantContext(text, { speakNow: true });
+  }
+
   private async start(): Promise<void> {
     this.active = true;
     const cascade = this.providerId === 'local-cascade';

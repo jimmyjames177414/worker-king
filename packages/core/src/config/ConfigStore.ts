@@ -27,6 +27,12 @@ export interface WorkerKingConfig {
   screenAwareness: boolean;
   /** Persist durable facts/preferences across sessions; on by default. */
   memoryEnabled: boolean;
+  /** Allow scheduled reminders; on by default. */
+  remindersEnabled: boolean;
+  /** Run scheduled proactive "watch" checks (spends Claude quota); off by default. */
+  proactiveEnabled: boolean;
+  /** Global hotkey to explain/act on the current clipboard selection. */
+  explainHotkey: string;
   /** The user's display name, for {{user}} in character cards. */
   userName?: string;
   /** Active SillyTavern chara_card_v2 (object), if the user imported one. */
@@ -46,6 +52,9 @@ export const DEFAULT_CONFIG: WorkerKingConfig = {
   wakeWordEnabled: false,
   screenAwareness: false,
   memoryEnabled: true,
+  remindersEnabled: true,
+  proactiveEnabled: false,
+  explainHotkey: 'Control+Shift+E',
 };
 
 export type ConfigChangeListener = (key: string, value: unknown) => void;
