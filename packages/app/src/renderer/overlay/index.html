@@ -1,0 +1,94 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src ws://127.0.0.1:*; style-src 'unsafe-inline'; script-src 'self'" />
+    <title>WorkerKing Companion</title>
+    <style>
+      html, body {
+        margin: 0;
+        width: 100%;
+        height: 100%;
+        background: transparent;
+        overflow: hidden;
+        -webkit-user-select: none;
+        user-select: none;
+      }
+      #stage {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: flex-end;
+        justify-content: center;
+        padding-bottom: 16px;
+      }
+      /* The avatar is the only interactive region; everything else is click-through. */
+      #avatar {
+        --avatar-level: 0;
+        width: 120px;
+        height: 120px;
+        border-radius: 50%;
+        cursor: pointer;
+        background: radial-gradient(circle at 35% 30%, #7fd4ff, #2a6cff 70%);
+        box-shadow: 0 6px 24px rgba(42, 108, 255, 0.5);
+        transition: transform 0.08s ease, box-shadow 0.2s ease, filter 0.2s ease;
+        animation: idle-bob 3s ease-in-out infinite;
+      }
+      /* When talking, scale with the live audio level (the "mouth"/pulse). */
+      .avatar--talking {
+        transform: scale(calc(1 + var(--avatar-level) * 0.28));
+      }
+      /* Captions bubble above the avatar. */
+      #captions {
+        position: absolute;
+        left: 50%;
+        bottom: 150px;
+        transform: translateX(-50%) translateY(6px);
+        max-width: 200px;
+        padding: 7px 11px;
+        border-radius: 12px;
+        font: 500 12.5px/1.35 system-ui, sans-serif;
+        color: #fff;
+        background: rgba(20, 22, 30, 0.86);
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+        text-align: center;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.18s ease, transform 0.18s ease;
+        white-space: normal;
+        word-break: break-word;
+      }
+      #captions[data-role='user'] { background: rgba(42, 108, 255, 0.92); }
+      #captions.captions--visible { opacity: 1; transform: translateX(-50%) translateY(0); }
+      .avatar--idle { filter: saturate(0.9); }
+      .avatar--listening {
+        box-shadow: 0 0 0 6px rgba(127, 212, 255, 0.35), 0 6px 24px rgba(42, 108, 255, 0.6);
+        animation: listen-pulse 1.2s ease-in-out infinite;
+      }
+      .avatar--thinking {
+        background: radial-gradient(circle at 35% 30%, #ffd77f, #ff9a2a 70%);
+        animation: think-spin 1.6s linear infinite;
+      }
+      .avatar--talking {
+        background: radial-gradient(circle at 35% 30%, #9dffb0, #17c964 70%);
+        /* No bounce animation while talking: the audio level drives the scale. */
+        animation: none;
+      }
+      .avatar--alert {
+        background: radial-gradient(circle at 35% 30%, #ff9d9d, #ff2a2a 70%);
+        animation: none;
+      }
+      @keyframes idle-bob { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-6px); } }
+      @keyframes listen-pulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.06); } }
+      @keyframes think-spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+      @keyframes talk-bounce { 0%,100% { transform: scale(1); } 50% { transform: scale(1.1); } }
+    </style>
+  </head>
+  <body>
+    <div id="stage">
+      <div id="captions"></div>
+      <div id="avatar" class="avatar--idle" title="WorkerKing"></div>
+    </div>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

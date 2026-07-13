@@ -1,0 +1,145 @@
+import type { WsServer, WsClient } from '../ws/server.js';
+import type { WsEnvelope } from '@workerking/shared';
+import type { ConfigStore } from '../config/ConfigStore.js';
+import type { Brain } from '../brain/Brain.js';
+import { TaskManager } from '../tasks/TaskManager.js';
+import { daemonEnvelopeContext } from '../util/ids.js';
+import type { InteractionLog } from '../memory/InteractionLog.js';
+
+/**
+ * Supervisor — the daemon's message router.
+ *
+ * In Phase 0 it wires two paths:
+ *  - chat.user_message -> Brain.respond -> streamed chat.assistant_delta + chat.assistant_done
+ *  - config.get / config.set -> ConfigStore (+ config.changed broadcast)
+ *
+ * Later phases add the voice.tool_call router (delegate_to_worker etc.), the
+ * TaskManager, and capability manifest broadcasts — all hung off this same class.
+ */
+export class Supervisor {
+  private readonly tasks: TaskManager;
+
+  constructor(
+    private readonly server: WsServer,
+    private readonly config: ConfigStore,
+    private readonly brain: Brain,
+    private readonly log?: InteractionLog,
+  ) {
+    // TaskManager drives delegated (voice) work; its events become task.* broadcasts.
+    this.tasks = new TaskManager({
+      runner: brain,
+      emit: {
+        created: (task) => server.broadcast('task.created', { task }),
+        progress: (taskId, progress) => server.broadcast('task.progress', { taskId, progress }),
+        done: (task) => {
+          server.broadcast('task.done', { task });
+          this.log?.append('task', `${task.prompt} → ${task.result?.summary ?? 'done'}`);
+        },
+        error: (taskId, error) => server.broadcast('task.error', { taskId, error }),
+        cancelled: (taskId) => server.broadcast('task.cancelled', { taskId }),
+      },
+      now: daemonEnvelopeContext.now,
+      newId: daemonEnvelopeContext.newId,
+    });
+
+    this.server.onMessage((client, env) => {
+      // Route by kind; unknown kinds are ignored (forward-compatible).
+      void this.dispatch(client, env);
+    });
+
+    // Rebroadcast config changes to every client (renderers keep settings live).
+    this.config.onChange((key, value) => {
+      this.server.broadcast('config.changed', { key, value });
+    });
+  }
+
+  private async dispatch(client: WsClient, env: WsEnvelope): Promise<void> {
+    switch (env.kind) {
+      case 'chat.user_message':
+        return this.handleChat(client, env as WsEnvelope<'chat.user_message'>);
+      case 'voice.tool_call':
+        return this.handleVoiceToolCall(client, env as WsEnvelope<'voice.tool_call'>);
+      case 'config.get':
+        return this.handleConfigGet(client, env as WsEnvelope<'config.get'>);
+      case 'config.set':
+        return this.handleConfigSet(env as WsEnvelope<'config.set'>);
+      default:
+        // Not handled in this phase.
+        return;
+    }
+  }
+
+  /**
+   * The chat-supervisor tool router. The thin voice model calls these; each replies
+   * fast (delegate returns a task_id immediately) so the conversation stays fluid,
+   * and progress/results flow asynchronously as task.* broadcasts.
+   */
+  private handleVoiceToolCall(client: WsClient, env: WsEnvelope<'voice.tool_call'>): void {
+    const { name, args } = env.payload;
+    const a = (args ?? {}) as Record<string, unknown>;
+    const reply = (result: unknown, isError = false) =>
+      client.send('voice.tool_result', { result, isError }, { replyTo: env.id });
+
+    switch (name) {
+      case 'delegate_to_worker': {
+        const prompt = String(a.task ?? a.prompt ?? a.request ?? '').trim();
+        if (!prompt) return reply({ error: 'No task text provided.' }, true);
+        const taskId = this.tasks.create(prompt);
+        return reply({ status: 'started', task_id: taskId });
+      }
+      case 'check_task_status': {
+        const task = this.tasks.check(String(a.task_id ?? ''));
+        return reply(
+          task
+            ? { state: task.state, latest: task.progress.at(-1)?.text ?? 'working on it' }
+            : { state: 'unknown', note: 'no such task (it may have finished)' },
+        );
+      }
+      case 'cancel_task': {
+        const ok = this.tasks.cancel(String(a.task_id ?? ''));
+        return reply({ cancelled: ok });
+      }
+      default:
+        return reply({ error: `Unknown tool: ${name}` }, true);
+    }
+  }
+
+  private async handleChat(
+    client: WsClient,
+    env: WsEnvelope<'chat.user_message'>,
+  ): Promise<void> {
+    const { text, messageId } = env.payload;
+    try {
+      const full = await this.brain.respond(text, (delta) => {
+        client.send('chat.assistant_delta', { messageId, delta });
+      });
+      client.send('chat.assistant_done', { messageId, text: full });
+      this.log?.append('chat', `user: ${text} | assistant: ${full.slice(0, 200)}`);
+    } catch (err) {
+      client.send('error', {
+        message: `Brain failed: ${String(err)}`,
+        code: 'brain_error',
+      });
+    }
+  }
+
+  private handleConfigGet(client: WsClient, env: WsEnvelope<'config.get'>): void {
+    const { key } = env.payload;
+    const value = key ? this.config.get(key) : this.config.get();
+    // Reply reuses config.changed as the response shape for a single key,
+    // or emits per-key for a full dump.
+    if (key) {
+      client.send('config.changed', { key, value }, { replyTo: env.id });
+    } else {
+      const all = value as Record<string, unknown>;
+      for (const [k, v] of Object.entries(all)) {
+        client.send('config.changed', { key: k, value: v });
+      }
+    }
+  }
+
+  private handleConfigSet(env: WsEnvelope<'config.set'>): void {
+    const { key, value } = env.payload;
+    this.config.set(key, value); // triggers config.changed broadcast via onChange
+  }
+}
