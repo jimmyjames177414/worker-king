@@ -61,6 +61,21 @@ here on Windows. Screen awareness (Track S) is already verified end-to-end in-co
 - [ ] Add a new `SKILL.md` under `~/.claude/skills/...` → within a moment the daemon
       re-broadcasts the manifest and the voice model can route to it (no restart).
 
+## Phase 5 — WSL bridge + free/local voice (orchestration verified; confirm on Windows)
+
+### WSL bridge
+- [ ] Set Claude host to WSL (or `auto` with Claude only in WSL) → the daemon spawns via
+      `wsl.exe` and the UI reaches it over `localhost`. Native and WSL behave identically.
+- [ ] Sleep the machine and resume → the overlay/chat reconnect automatically (powerMonitor
+      → `wk:reconnect`). Tip: add `[wsl2] networkingMode=mirrored` to `.wslconfig` for robustness.
+
+### Free/local voice (offline, ~$0/min — the cascade orchestration is verified in-container)
+The provider (LocalCascadeProvider) + Claude-as-voice-brain loop is verified here with fake engines
+(transcript "two plus two" → Claude → TTS "4"). The real audio engines are an opt-in install:
+- [ ] Install the offline engines: `pnpm --filter @workerking/app add @ricky0123/vad-web @huggingface/transformers kokoro-js`.
+- [ ] Set voice provider to "local-cascade" in Settings → talk fully offline: Silero VAD + Whisper
+      STT + Kokoro TTS, with Claude doing the thinking (and still delegating heavy tasks).
+
 ## Phase 6 — memory & learning (verified in-container; confirm on Windows)
 
 Both memory flows are verified end-to-end against real Claude in the container

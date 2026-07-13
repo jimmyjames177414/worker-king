@@ -24,6 +24,10 @@ const api = {
   onPushToTalk: (cb: () => void): void => {
     ipcRenderer.on('wk:push-to-talk', () => cb());
   },
+  /** Fired after system resume so the renderer can heal its WS connection. */
+  onReconnect: (cb: () => void): void => {
+    ipcRenderer.on('wk:reconnect', () => cb());
+  },
 };
 
 contextBridge.exposeInMainWorld('workerking', api);

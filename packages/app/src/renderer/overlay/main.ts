@@ -17,6 +17,7 @@ const bridge = (window as unknown as {
     setClickThrough(on: boolean): void;
     mintRealtimeKey(): Promise<string>;
     onPushToTalk(cb: () => void): void;
+    onReconnect(cb: () => void): void;
   };
 }).workerking;
 
@@ -44,6 +45,9 @@ async function main(): Promise<void> {
 
   client.on('avatar.state', (env) => avatar.set(env.payload.state));
   client.on('welcome', () => avatar.set('idle'));
+
+  // Heal the WS link after system resume (WSL localhost forwarding can drop).
+  bridge.onReconnect(() => client.reconnect());
 
   // Reflect the voice provider's own state onto the avatar.
   client.on('voice.state', (env) => {

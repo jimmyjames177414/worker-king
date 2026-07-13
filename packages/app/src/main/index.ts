@@ -1,4 +1,4 @@
-import { app, globalShortcut, BrowserWindow } from 'electron';
+import { app, globalShortcut, BrowserWindow, powerMonitor } from 'electron';
 import Store from 'electron-store';
 import { DaemonSupervisor, type DaemonConnection } from './DaemonSupervisor.js';
 import { detectClaude } from './WslDetector.js';
@@ -155,6 +155,16 @@ async function boot(): Promise<void> {
   });
 
   registerHotkey(config.get('hotkey'));
+
+  // After sleep, WSL2's localhost forwarding (and sometimes native sockets) can
+  // drop. Proactively heal: reconnect main's daemon client, re-push config, and
+  // tell the renderers to reconnect their WS clients.
+  powerMonitor.on('resume', () => {
+    process.stderr.write('[workerking] system resumed — reconnecting daemon links\n');
+    daemonClient?.connect();
+    overlay?.webContents.send('wk:reconnect');
+    chat?.webContents.send('wk:reconnect');
+  });
 }
 
 /** (Re)register the push-to-talk global shortcut, replacing any prior binding. */

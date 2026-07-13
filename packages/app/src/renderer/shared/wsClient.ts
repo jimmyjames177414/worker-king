@@ -44,6 +44,14 @@ export class WsClient {
     this.open();
   }
 
+  /** Force a reconnect if the socket is dead (e.g. after system resume). No-op if healthy. */
+  reconnect(): void {
+    this.closedByUser = false;
+    const state = this.ws?.readyState;
+    if (state === WebSocket.OPEN || state === WebSocket.CONNECTING) return;
+    this.open();
+  }
+
   private open(): void {
     const ws = new WebSocket(`ws://127.0.0.1:${this.conn.port}`);
     this.ws = ws;

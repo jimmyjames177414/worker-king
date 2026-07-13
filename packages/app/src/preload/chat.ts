@@ -15,6 +15,10 @@ const api = {
   setSecret: (key: string, value: string): Promise<void> =>
     ipcRenderer.invoke('wk:set-secret', key, value),
   hasSecret: (key: string): Promise<boolean> => ipcRenderer.invoke('wk:has-secret', key),
+  /** Fired after system resume so the renderer can heal its WS connection. */
+  onReconnect: (cb: () => void): void => {
+    ipcRenderer.on('wk:reconnect', () => cb());
+  },
 };
 
 contextBridge.exposeInMainWorld('workerking', api);

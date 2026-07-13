@@ -1,6 +1,7 @@
 import {
   GptRealtimeProvider,
   createRealtimeSessionFactory,
+  createLocalCascadeProvider,
   type VoiceProvider,
 } from '@workerking/voice-providers';
 import { isKind, type JsonValue } from '@workerking/shared';
@@ -25,19 +26,24 @@ export class VoiceHost {
   private provider?: VoiceProvider;
   private active = false;
   private model = 'gpt-realtime-mini';
+  private providerId: 'gpt-realtime' | 'local-cascade' = 'gpt-realtime';
 
   constructor(
     private readonly ws: WsClient,
     private readonly bridge: VoiceBridge,
     private readonly getPersona: () => string,
   ) {
-    // Keep the model in sync with daemon config.
+    // Keep the model + active provider in sync with daemon config.
     this.ws.on('config.changed', (env) => {
       if (env.payload.key === 'openaiModel' && typeof env.payload.value === 'string') {
         this.model = env.payload.value;
       }
+      if (env.payload.key === 'voiceProvider' && typeof env.payload.value === 'string') {
+        this.providerId = env.payload.value === 'local-cascade' ? 'local-cascade' : 'gpt-realtime';
+      }
     });
     this.ws.send('config.get', { key: 'openaiModel' });
+    this.ws.send('config.get', { key: 'voiceProvider' });
 
     // Spoken progress + final results from delegated tasks (turn-gated inside the
     // provider so they don't collide with the user speaking).
@@ -100,26 +106,34 @@ export class VoiceHost {
 
   private async start(): Promise<void> {
     this.active = true;
-    const provider = new GptRealtimeProvider({
-      model: this.model,
-      mintKey: () => this.bridge.mintRealtimeKey(),
-      createSession: createRealtimeSessionFactory,
-    });
+    const cascade = this.providerId === 'local-cascade';
+    // GPT Realtime: the model is the brain. Local cascade: Claude (via the daemon
+    // chat path) is the brain, and this provider is pure audio I/O.
+    const provider: VoiceProvider = cascade
+      ? createLocalCascadeProvider()
+      : new GptRealtimeProvider({
+          model: this.model,
+          mintKey: () => this.bridge.mintRealtimeKey(),
+          createSession: createRealtimeSessionFactory,
+        });
     this.provider = provider;
 
     try {
       await provider.start({
         systemPrompt: this.getPersona(),
-        tools: this.supervisorTools(),
+        tools: cascade ? [] : this.supervisorTools(),
         delegate: {
           onToolCall: async (name: string, args: JsonValue): Promise<JsonValue> => {
-            // Round-trip to the daemon Supervisor and return its result to the model.
             const reply = await this.ws.request('voice.tool_call', { name, args });
             if (isKind(reply, 'voice.tool_result')) return reply.payload.result as JsonValue;
             return {};
           },
-          onUserTranscript: (text, final) =>
-            this.ws.send('voice.transcript', { role: 'user', text, final }),
+          onUserTranscript: (text, final) => {
+            this.ws.send('voice.transcript', { role: 'user', text, final });
+            // Cascade mode: route the transcript to the Claude brain + speak the
+            // reply (GPT Realtime speaks on its own, so no routing there).
+            if (cascade && final && text.trim()) void this.handleCascadeTurn(text);
+          },
           onAssistantTranscript: (text, final) =>
             this.ws.send('voice.transcript', { role: 'assistant', text, final }),
           onStateChange: (state) => this.ws.send('voice.state', { state }),
@@ -136,6 +150,31 @@ export class VoiceHost {
       this.ws.send('voice.state', { state: 'error' });
       console.error('[voice] failed to start', err);
     }
+  }
+
+  /** Cascade mode: send a transcript to the daemon Claude brain, speak the reply. */
+  private async handleCascadeTurn(text: string): Promise<void> {
+    const messageId = crypto.randomUUID();
+    const reply = await this.awaitChatReply(text, messageId);
+    if (reply) await this.provider?.injectAssistantContext(reply, { speakNow: true });
+  }
+
+  /** Send chat.user_message and resolve with the full reply (matched by messageId). */
+  private awaitChatReply(text: string, messageId: string, timeoutMs = 60000): Promise<string> {
+    return new Promise((resolve) => {
+      const off = this.ws.on('chat.assistant_done', (env) => {
+        if (env.payload.messageId === messageId) {
+          clearTimeout(timer);
+          off();
+          resolve(env.payload.text);
+        }
+      });
+      const timer = setTimeout(() => {
+        off();
+        resolve('');
+      }, timeoutMs);
+      this.ws.send('chat.user_message', { text, messageId });
+    });
   }
 
   private async stop(): Promise<void> {

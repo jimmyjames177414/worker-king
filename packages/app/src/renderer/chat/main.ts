@@ -46,7 +46,11 @@ async function main(): Promise<void> {
   });
 
   // Settings panel (⚙): the configurable-in-all-aspects surface.
-  const bridge = (window as unknown as { workerking: SettingsBridge }).workerking;
+  const bridge = (window as unknown as {
+    workerking: SettingsBridge & { onReconnect(cb: () => void): void };
+  }).workerking;
+  // Heal the WS link after system resume.
+  bridge.onReconnect(() => client.reconnect());
   const settingsEl = document.getElementById('settings');
   const settingsBody = document.getElementById('settings-body');
   if (settingsEl && settingsBody) {
