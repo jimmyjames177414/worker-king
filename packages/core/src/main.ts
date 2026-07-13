@@ -1,4 +1,5 @@
 import { writeFileSync } from 'node:fs';
+import type { PayloadOf } from '@workerking/shared';
 import { WsServer } from './ws/server.js';
 import { ConfigStore } from './config/ConfigStore.js';
 import { Supervisor } from './supervisor/Supervisor.js';
@@ -102,18 +103,28 @@ async function resolveBrain(
   const cwd = config.get('claudeCwd') as string | undefined;
 
   // Proactive channel: reminders + notify tool → proactive.notify broadcast.
+  // If no UI client is connected yet (e.g. a reminder that came due while the
+  // daemon was down, before the WS server is even listening), buffer the notice
+  // and flush it when the first client connects — so nothing is silently lost.
+  const pendingNotices: Array<PayloadOf<'proactive.notify'>> = [];
   const proactiveNotify = (n: {
     text: string;
     level?: 'info' | 'warn' | 'success';
     speak?: boolean;
     source?: string;
-  }) =>
-    server.broadcast('proactive.notify', {
+  }) => {
+    const payload: PayloadOf<'proactive.notify'> = {
       text: n.text,
       level: n.level ?? 'info',
       speak: n.speak ?? true,
       source: n.source,
-    });
+    };
+    if (server.clientCount() === 0) pendingNotices.push(payload);
+    else server.broadcast('proactive.notify', payload);
+  };
+  server.onClientConnected(() => {
+    for (const payload of pendingNotices.splice(0)) server.broadcast('proactive.notify', payload);
+  });
 
   const reminderScheduler = new ReminderScheduler({
     store: reminderStore,
@@ -217,6 +228,9 @@ export async function startDaemon(opts: StartDaemonOptions = {}): Promise<Runnin
   // brain resolves in the background (bounded probe) and swaps itself in.
   const mode = opts.brainMode ?? 'auto';
   const disposables: Disposable[] = [];
+  // Tracks the async brain resolution so stop() can wait for late-registered
+  // disposables (capability manager / nightly job / proactive) to exist first.
+  let brainReady: Promise<void> = Promise.resolve();
   let brain: Brain;
   if (opts.brain) {
     brain = opts.brain;
@@ -225,7 +239,9 @@ export async function startDaemon(opts: StartDaemonOptions = {}): Promise<Runnin
   } else {
     const deferred = new DeferredBrain();
     brain = deferred;
-    void resolveBrain(deferred, config, server, mode, (d) => disposables.push(d));
+    brainReady = resolveBrain(deferred, config, server, mode, (d) => disposables.push(d)).catch(
+      () => {},
+    );
   }
   new Supervisor(server, config, brain, interactionLog);
 
@@ -246,6 +262,9 @@ export async function startDaemon(opts: StartDaemonOptions = {}): Promise<Runnin
     token,
     server,
     stop: async () => {
+      // Wait for the brain probe to finish so late-registered disposables
+      // (capability watcher, nightly/proactive crons) are cleaned up, not leaked.
+      await brainReady;
       for (const d of disposables) await d.stop();
       await server.close();
     },

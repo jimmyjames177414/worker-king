@@ -89,6 +89,22 @@ describe('LocalCascadeProvider', () => {
     expect(tts.stops).toBeGreaterThan(0);
   });
 
+  it('muting blocks barge-in (speech start does not cut TTS while muted)', async () => {
+    const tts = new FakeTts();
+    const vad = new FakeVad();
+    const provider = new LocalCascadeProvider({ vad, stt: new FakeStt('x'), tts });
+    const { opts } = delegateCollector();
+    await provider.start(opts);
+
+    provider.setMicEnabled(false);
+    vad.onSpeechStart!(); // user talks while muted
+    expect(tts.stops).toBe(0); // TTS not cut
+
+    provider.setMicEnabled(true);
+    vad.onSpeechStart!(); // now barge-in works
+    expect(tts.stops).toBeGreaterThan(0);
+  });
+
   it('interrupt() and mute gate the pipeline', async () => {
     const tts = new FakeTts();
     const vad = new FakeVad();

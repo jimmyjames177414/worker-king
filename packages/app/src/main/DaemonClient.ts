@@ -25,6 +25,7 @@ export class DaemonClient {
   private ws?: WebSocket;
   private closedByUser = false;
   private reconnectDelay = 500;
+  private reconnectTimer?: ReturnType<typeof setTimeout>;
   private readonly handlers = new Map<WsMessageKind, (env: WsEnvelope) => void>();
 
   constructor(private readonly conn: DaemonConnection) {}
@@ -38,7 +39,33 @@ export class DaemonClient {
     this.open();
   }
 
+  /**
+   * Force a reconnect only if the socket is dead (e.g. after system resume).
+   * No-op if it's still OPEN/CONNECTING — avoids spawning duplicate/zombie
+   * connections that would leave orphaned `role:'main'` clients on the daemon.
+   */
+  reconnect(): void {
+    this.closedByUser = false;
+    const state = this.ws?.readyState;
+    if (state === WebSocket.OPEN || state === WebSocket.CONNECTING) return;
+    this.open();
+  }
+
   private open(): void {
+    // Ensure only one live socket: drop any pending reconnect + close the old one.
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = undefined;
+    }
+    if (this.ws && this.ws.readyState !== WebSocket.CLOSED) {
+      this.ws.removeAllListeners();
+      try {
+        this.ws.close();
+      } catch {
+        /* ignore */
+      }
+    }
+
     const ws = new WebSocket(`ws://127.0.0.1:${this.conn.port}`);
     this.ws = ws;
     ws.on('open', () => {
@@ -56,13 +83,15 @@ export class DaemonClient {
       if (handler) handler(env);
     });
     ws.on('close', () => {
-      if (!this.closedByUser) this.scheduleReconnect();
+      if (this.ws === ws && !this.closedByUser) this.scheduleReconnect();
     });
     ws.on('error', () => ws.close());
   }
 
   private scheduleReconnect(): void {
-    setTimeout(() => {
+    if (this.reconnectTimer) return; // one pending reconnect at a time
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = undefined;
       if (!this.closedByUser) this.open();
     }, this.reconnectDelay);
     this.reconnectDelay = Math.min(this.reconnectDelay * 2, 8000);
@@ -79,6 +108,10 @@ export class DaemonClient {
 
   close(): void {
     this.closedByUser = true;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = undefined;
+    }
     this.ws?.close();
   }
 }

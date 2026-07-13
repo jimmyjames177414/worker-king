@@ -59,6 +59,25 @@ describe('consolidate', () => {
     expect(memory.recall('editor')[0].provenance).toBe('nightly-consolidation');
   });
 
+  it('preserves live memories when the distiller returns nothing (flaky reply)', async () => {
+    clock = 0;
+    const dir = tempDir();
+    const memory = new MemoryStore({ dir, now });
+    memory.remember('editor', 'Cursor', 'preference');
+    memory.remember('timezone', 'PST', 'fact');
+    const log = new InteractionLog({ dir, now, today: () => '2026-07-13' });
+    log.append('chat', 'some chatter');
+
+    // Distiller yields [] (e.g. Claude returned prose parseDistilled couldn't parse).
+    const distill: Distiller = async () => [];
+    const res = await consolidate({ memory, log, distill, now });
+
+    // Memories must be untouched — never stale-swept to nothing.
+    expect(res).toEqual({ kept: 2, staled: 0 });
+    expect(memory.recall().map((e) => e.key).sort()).toEqual(['editor', 'timezone']);
+    expect(memory.summary()).toContain('Cursor');
+  });
+
   it('is a no-op when there is nothing to consolidate', async () => {
     const dir = tempDir();
     const memory = new MemoryStore({ dir, now });

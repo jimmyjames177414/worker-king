@@ -59,6 +59,61 @@ describe('ReminderScheduler', () => {
     armedCb?.(); // simulate the timer elapsing for 'later'
     expect(fired).toContain('later');
   });
+
+  it('re-arms (does not fire) a far-future reminder instead of firing early', () => {
+    let t = 0;
+    const dir = tempDir();
+    const store = new ReminderStore({ dir, now: () => t });
+    // 60 days out — well past the ~24.8-day setTimeout ceiling.
+    store.add('far', 60 * 24 * 3600 * 1000, 'far');
+
+    const fired: string[] = [];
+    const delays: number[] = [];
+    let cb: (() => void) | undefined;
+    const scheduler = new ReminderScheduler({
+      store,
+      now: () => t,
+      onFire: (r) => fired.push(r.id),
+      setTimer: (c, ms) => {
+        cb = c;
+        delays.push(ms);
+        return { clear: () => {} };
+      },
+    });
+    scheduler.start();
+
+    // First timer is capped (not the full 60-day delay), and firing it re-arms
+    // rather than delivering the reminder.
+    expect(delays[0]).toBeLessThanOrEqual(2_000_000_000);
+    cb!();
+    expect(fired).toEqual([]); // still not fired
+    expect(delays.length).toBe(2); // re-armed with another capped timer
+  });
+
+  it('does not fire a reminder that is no longer pending (cancelled)', () => {
+    let t = 1000;
+    const dir = tempDir();
+    const store = new ReminderStore({ dir, now: () => t });
+    store.add('gone', 2000, 'gone');
+
+    const fired: string[] = [];
+    let cb: (() => void) | undefined;
+    const scheduler = new ReminderScheduler({
+      store,
+      now: () => t,
+      onFire: (r) => fired.push(r.id),
+      setTimer: (c) => {
+        cb = c;
+        return { clear: () => {} };
+      },
+    });
+    scheduler.start();
+
+    store.cancel('gone'); // removed before the timer elapses
+    t = 3000;
+    cb!(); // timer fires after the fire time, but it's no longer pending
+    expect(fired).toEqual([]);
+  });
 });
 
 describe('notify + set_reminder tools', () => {

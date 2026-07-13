@@ -46,6 +46,12 @@ export async function consolidate(deps: ConsolidateDeps): Promise<{ kept: number
 
   const distilled = await deps.distill({ memories: liveBefore, interactions });
 
+  // A flaky/unparseable distill returns []. Treat "no signal" as "no change" —
+  // never let an empty result silently stale-sweep the user's existing memories.
+  if (distilled.length === 0 && liveBefore.length > 0) {
+    return { kept: liveBefore.length, staled: 0 };
+  }
+
   const distilledKeys = new Set(distilled.map((d) => d.key));
   const newLive: MemoryEntry[] = distilled.map((d) => ({
     key: d.key,
@@ -55,11 +61,10 @@ export async function consolidate(deps: ConsolidateDeps): Promise<{ kept: number
     provenance: 'nightly-consolidation',
   }));
 
-  // Anything previously live but not carried forward → stale (audit), plus any
-  // already-stale entries stay stale.
+  // Anything not carried forward by the distiller → stale (kept for audit, never
+  // deleted). A revived key ends up in newLive instead.
   const staled: MemoryEntry[] = deps.memory
     .all()
-    .filter((e) => e.stale || !distilledKeys.has(e.key))
     .filter((e) => !distilledKeys.has(e.key))
     .map((e) => ({ ...e, stale: true }));
 

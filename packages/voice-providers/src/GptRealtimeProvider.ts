@@ -140,7 +140,9 @@ export class GptRealtimeProvider implements VoiceProvider {
  * moves the avatar. Transport-agnostic (works for WebRTC and WebSocket audio).
  */
 export function computePcm16Rms(buffer: ArrayBuffer, boost = 1.8): number {
-  const samples = new Int16Array(buffer);
+  // Int16Array requires an even byte length; a misaligned chunk would throw.
+  const evenBytes = buffer.byteLength & ~1;
+  const samples = new Int16Array(buffer, 0, evenBytes / 2);
   if (samples.length === 0) return 0;
   let sumSquares = 0;
   for (let i = 0; i < samples.length; i++) {

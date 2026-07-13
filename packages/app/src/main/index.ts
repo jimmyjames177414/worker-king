@@ -192,7 +192,7 @@ async function boot(): Promise<void> {
   // tell the renderers to reconnect their WS clients.
   powerMonitor.on('resume', () => {
     process.stderr.write('[workerking] system resumed — reconnecting daemon links\n');
-    daemonClient?.connect();
+    daemonClient?.reconnect(); // guarded: no-op if the socket is still healthy
     overlay?.webContents.send('wk:reconnect');
     chat?.webContents.send('wk:reconnect');
   });
@@ -201,7 +201,7 @@ async function boot(): Promise<void> {
 /** (Re)register the push-to-talk global shortcut, replacing any prior binding. */
 function registerHotkey(accelerator: string): void {
   // Re-register just the push-to-talk key (keep the explain key intact).
-  globalShortcut.unregister(currentHotkey);
+  if (currentHotkey) globalShortcut.unregister(currentHotkey);
   currentHotkey = accelerator;
   try {
     globalShortcut.register(accelerator, () => {
@@ -235,10 +235,13 @@ function explainSelection(): void {
     return;
   }
   const messageId = randomUUID();
+  // Drop the pending entry if no reply arrives (e.g. the daemon returned `error`)
+  // so the map + its captured closures don't leak over a long session.
+  const timeout = setTimeout(() => pendingExplain.delete(messageId), 90_000);
   pendingExplain.set(messageId, (reply) => {
+    clearTimeout(timeout);
     if (Notification.isSupported()) new Notification({ title: 'WorkerKing', body: reply }).show();
-    overlay?.webContents.send('wk:speak', reply);
-    chat?.webContents.send('wk:speak', reply);
+    overlay?.webContents.send('wk:speak', reply); // the overlay speaks it (chat has no speak handler)
   });
   daemonClient?.send('chat.user_message', {
     text: `The user selected this text and wants your help with it — explain it or act on it, concisely:\n\n${text}`,

@@ -59,6 +59,8 @@ export class LocalCascadeProvider implements VoiceProvider {
       (pcm) => void this.onUtterance(pcm),
       () => {
         // User started speaking → cut off any current TTS (barge-in) and listen.
+        // Ignore while muted or stopped so muting truly silences the mic.
+        if (!this.running || !this.micEnabled) return;
         this.engines.tts.stop();
         this.setState('listening');
       },

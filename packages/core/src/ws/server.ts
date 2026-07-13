@@ -49,6 +49,7 @@ export class WsServer {
   private handler?: MessageHandler;
   private readonly clients = new Map<string, WsClient>();
   private readonly replyHandlers = new Map<string, (env: WsEnvelope) => void>();
+  private readonly clientConnectedHandlers = new Set<(client: WsClient) => void>();
   private connSeq = 0;
 
   constructor(opts: WsServerOptions) {
@@ -126,6 +127,8 @@ export class WsServer {
           daemonVersion: this.daemonVersion,
           host: this.host,
         });
+        // Notify listeners after welcome so any flushed messages arrive next.
+        for (const cb of this.clientConnectedHandlers) cb(client);
         return;
       }
 
@@ -167,6 +170,12 @@ export class WsServer {
     };
     this.clients.set(connectionId, client);
     return client;
+  }
+
+  /** Fire `cb` whenever a client completes the handshake (used to flush buffered notices). */
+  onClientConnected(cb: (client: WsClient) => void): () => void {
+    this.clientConnectedHandlers.add(cb);
+    return () => this.clientConnectedHandlers.delete(cb);
   }
 
   private sendRaw<K extends WsMessageKind>(

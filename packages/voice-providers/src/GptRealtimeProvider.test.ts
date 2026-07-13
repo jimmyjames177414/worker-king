@@ -91,6 +91,13 @@ describe('computePcm16Rms', () => {
     expect(computePcm16Rms(new ArrayBuffer(0))).toBe(0);
     expect(computePcm16Rms(new Int16Array([0, 0, 0, 0]).buffer)).toBe(0);
   });
+  it('tolerates an odd-length buffer without throwing', () => {
+    // 3 bytes: not a whole number of Int16 samples.
+    const odd = new Uint8Array([0x00, 0x40, 0x11]).buffer;
+    expect(() => computePcm16Rms(odd)).not.toThrow();
+    expect(computePcm16Rms(odd)).toBeGreaterThanOrEqual(0);
+  });
+
   it('rises with amplitude and clamps to 1', () => {
     const quiet = computePcm16Rms(new Int16Array([1000, -1000, 1000, -1000]).buffer);
     const loud = computePcm16Rms(new Int16Array([20000, -20000, 20000, -20000]).buffer);

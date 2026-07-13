@@ -1,5 +1,8 @@
 import type { ReminderStore, Reminder } from './ReminderStore.js';
 
+/** Max single setTimeout delay before Node clamps to 1ms (~24.8 days). */
+const MAX_TIMER_MS = 2_000_000_000;
+
 /**
  * ReminderScheduler — arms `setTimeout`s for pending reminders and fires them.
  *
@@ -42,6 +45,17 @@ export class ReminderScheduler {
   arm(reminder: Reminder): void {
     if (this.timers.has(reminder.id)) return;
     const delay = Math.max(0, reminder.fireAt - this.now());
+    // setTimeout clamps delays > ~24.85 days to 1ms (fires immediately). For
+    // far-future reminders, arm an intermediate timer that re-arms rather than
+    // firing early.
+    if (delay > MAX_TIMER_MS) {
+      const timer = this.setTimer(() => {
+        this.timers.delete(reminder.id);
+        this.arm(reminder);
+      }, MAX_TIMER_MS);
+      this.timers.set(reminder.id, timer);
+      return;
+    }
     const timer = this.setTimer(() => this.fire(reminder), delay);
     this.timers.set(reminder.id, timer);
   }
@@ -49,7 +63,8 @@ export class ReminderScheduler {
   private fire(reminder: Reminder): void {
     this.timers.get(reminder.id)?.clear();
     this.timers.delete(reminder.id);
-    if (this.deps.store.pending().some((r) => r.id === reminder.id) || reminder.fireAt <= this.now()) {
+    // Only fire if still pending (not cancelled or already fired).
+    if (this.deps.store.pending().some((r) => r.id === reminder.id)) {
       this.deps.store.markFired(reminder.id);
       this.deps.onFire(reminder);
     }
