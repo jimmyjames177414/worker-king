@@ -61,6 +61,17 @@ here on Windows. Screen awareness (Track S) is already verified end-to-end in-co
 - [ ] Add a new `SKILL.md` under `~/.claude/skills/...` → within a moment the daemon
       re-broadcasts the manifest and the voice model can route to it (no restart).
 
+## Phase 6 — memory & learning (verified in-container; confirm on Windows)
+
+Both memory flows are verified end-to-end against real Claude in the container
+(remember→recall across sessions; nightly consolidate distilled "switched to Cursor").
+On Windows, confirm:
+- [ ] Tell it a preference ("remember I use Cursor") → it calls `remember`; in a later
+      session it recalls it unprompted. Check `~/.claude/workerking/memories.md` (hand-editable).
+- [ ] Toggle "Remember things about me" off in Settings → `remember` refuses.
+- [ ] Over real use, watch for self-authored skills appearing under `~/.claude/skills/`
+      (the persona nudges Claude to save repeated multi-step tasks).
+
 ## Phase 3 — voice delegation (daemon side verified in-container; confirm spoken)
 
 The full delegate → progress → done path is verified end-to-end against real Claude in

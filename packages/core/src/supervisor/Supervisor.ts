@@ -4,6 +4,7 @@ import type { ConfigStore } from '../config/ConfigStore.js';
 import type { Brain } from '../brain/Brain.js';
 import { TaskManager } from '../tasks/TaskManager.js';
 import { daemonEnvelopeContext } from '../util/ids.js';
+import type { InteractionLog } from '../memory/InteractionLog.js';
 
 /**
  * Supervisor — the daemon's message router.
@@ -22,6 +23,7 @@ export class Supervisor {
     private readonly server: WsServer,
     private readonly config: ConfigStore,
     private readonly brain: Brain,
+    private readonly log?: InteractionLog,
   ) {
     // TaskManager drives delegated (voice) work; its events become task.* broadcasts.
     this.tasks = new TaskManager({
@@ -29,7 +31,10 @@ export class Supervisor {
       emit: {
         created: (task) => server.broadcast('task.created', { task }),
         progress: (taskId, progress) => server.broadcast('task.progress', { taskId, progress }),
-        done: (task) => server.broadcast('task.done', { task }),
+        done: (task) => {
+          server.broadcast('task.done', { task });
+          this.log?.append('task', `${task.prompt} → ${task.result?.summary ?? 'done'}`);
+        },
         error: (taskId, error) => server.broadcast('task.error', { taskId, error }),
         cancelled: (taskId) => server.broadcast('task.cancelled', { taskId }),
       },
@@ -109,6 +114,7 @@ export class Supervisor {
         client.send('chat.assistant_delta', { messageId, delta });
       });
       client.send('chat.assistant_done', { messageId, text: full });
+      this.log?.append('chat', `user: ${text} | assistant: ${full.slice(0, 200)}`);
     } catch (err) {
       client.send('error', {
         message: `Brain failed: ${String(err)}`,

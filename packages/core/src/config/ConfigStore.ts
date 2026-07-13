@@ -25,6 +25,8 @@ export interface WorkerKingConfig {
   wakeWordEnabled: boolean;
   /** Allow Claude to read the foreground window / screenshots; off by default. */
   screenAwareness: boolean;
+  /** Persist durable facts/preferences across sessions; on by default. */
+  memoryEnabled: boolean;
   /** The user's display name, for {{user}} in character cards. */
   userName?: string;
   /** Active SillyTavern chara_card_v2 (object), if the user imported one. */
@@ -43,6 +45,7 @@ export const DEFAULT_CONFIG: WorkerKingConfig = {
   hotkey: 'Control+Shift+Space',
   wakeWordEnabled: false,
   screenAwareness: false,
+  memoryEnabled: true,
 };
 
 export type ConfigChangeListener = (key: string, value: unknown) => void;

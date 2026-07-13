@@ -10,8 +10,21 @@ import { CapabilityManager } from './capability/CapabilityManager.js';
 import { realCapabilityQueryFn } from './capability/realCapabilityQuery.js';
 import { assemblePersonaAppend } from './persona/assemblePersona.js';
 import { assemblePersonaFromCard, parseCharacterCard } from './persona/CharacterCard.js';
+import { MemoryStore } from './memory/MemoryStore.js';
+import { InteractionLog } from './memory/InteractionLog.js';
+import { NightlyJob, createClaudeDistiller } from './memory/NightlyJob.js';
 import { detectHost } from './util/host.js';
 import { newToken } from './util/ids.js';
+
+// Process-wide memory store + interaction log (file-based under ~/.claude/workerking).
+const memory = new MemoryStore();
+const interactionLog = new InteractionLog();
+
+/** The Voyager-pattern nudge: encourage Claude to grow its own skills. */
+const SELF_AUTHOR_NUDGE =
+  'If you find yourself doing the same multi-step task more than once, offer to save it as a ' +
+  'reusable skill: write a SKILL.md under ~/.claude/skills/<name>/ so it becomes available to you ' +
+  '(and voice-routable) next time.';
 
 export const DAEMON_VERSION = '0.0.0';
 
@@ -49,16 +62,30 @@ export interface RunningDaemon {
  * live per message so settings/card changes apply without a restart.
  */
 export function computePersonaAppend(config: ConfigStore): string {
+  let base: string;
   const card = config.get('characterCard');
   if (card) {
     try {
       const userName = config.get('userName') as string | undefined;
-      return assemblePersonaFromCard(parseCharacterCard(card), { userName }).systemPrompt.append;
+      base = assemblePersonaFromCard(parseCharacterCard(card), { userName }).systemPrompt.append;
     } catch {
-      // Malformed card → fall back to the simple persona.
+      base = assemblePersonaAppend(config.get());
     }
+  } else {
+    base = assemblePersonaAppend(config.get());
   }
-  return assemblePersonaAppend(config.get());
+
+  // Layer in remembered facts (always in context) + the self-authoring nudge.
+  const parts = [base, SELF_AUTHOR_NUDGE];
+  if (config.get('memoryEnabled') !== false) {
+    const mem = memory.summary();
+    if (mem) parts.push(mem);
+  }
+  return parts.filter(Boolean).join('\n\n');
+}
+
+interface Disposable {
+  stop: () => void | Promise<void>;
 }
 
 async function resolveBrain(
@@ -66,7 +93,7 @@ async function resolveBrain(
   config: ConfigStore,
   server: WsServer,
   mode: 'auto' | 'claude',
-  onCapabilityManager: (cm: CapabilityManager) => void,
+  registerDisposable: (d: Disposable) => void,
 ): Promise<void> {
   const cwd = config.get('claudeCwd') as string | undefined;
 
@@ -74,7 +101,8 @@ async function resolveBrain(
   const toolServer = createWorkerKingToolServer({
     config,
     screen: new WsScreenContextProvider(server),
-    audit: (e) => process.stderr.write(`[workerking][screen] ${e.tool}: ${e.detail}\n`),
+    memory,
+    audit: (e) => process.stderr.write(`[workerking][tool] ${e.tool}: ${e.detail}\n`),
   });
   const claudeOpts = {
     cwd,
@@ -91,10 +119,20 @@ async function resolveBrain(
       broadcast: (manifest) => server.broadcast('capability.updated', { manifest }),
       cwd,
     });
-    onCapabilityManager(cm);
+    registerDisposable(cm);
     cm.start().catch((e) =>
       process.stderr.write(`[workerking] capability manifest build failed: ${String(e)}\n`),
     );
+
+    // Nightly memory consolidation (Letta sleep-time), when memory is enabled.
+    if (config.get('memoryEnabled') !== false) {
+      const distiller = createClaudeDistiller((prompt) =>
+        createClaudeBackend({ cwd }).respond(prompt, () => {}),
+      );
+      const job = new NightlyJob({ memory, log: interactionLog, distill: distiller });
+      job.start();
+      registerDisposable({ stop: () => job.stop() });
+    }
   };
 
   if (mode === 'claude') {
@@ -133,7 +171,7 @@ export async function startDaemon(opts: StartDaemonOptions = {}): Promise<Runnin
   // used directly; otherwise a DeferredBrain is installed now and the real Claude
   // brain resolves in the background (bounded probe) and swaps itself in.
   const mode = opts.brainMode ?? 'auto';
-  let capabilityManager: CapabilityManager | undefined;
+  const disposables: Disposable[] = [];
   let brain: Brain;
   if (opts.brain) {
     brain = opts.brain;
@@ -142,11 +180,9 @@ export async function startDaemon(opts: StartDaemonOptions = {}): Promise<Runnin
   } else {
     const deferred = new DeferredBrain();
     brain = deferred;
-    void resolveBrain(deferred, config, server, mode, (cm) => {
-      capabilityManager = cm;
-    });
+    void resolveBrain(deferred, config, server, mode, (d) => disposables.push(d));
   }
-  new Supervisor(server, config, brain);
+  new Supervisor(server, config, brain, interactionLog);
 
   const requestedPort =
     opts.port ?? (process.env.WORKERKING_PORT ? Number(process.env.WORKERKING_PORT) : 0);
@@ -165,7 +201,7 @@ export async function startDaemon(opts: StartDaemonOptions = {}): Promise<Runnin
     token,
     server,
     stop: async () => {
-      await capabilityManager?.stop();
+      for (const d of disposables) await d.stop();
       await server.close();
     },
   };

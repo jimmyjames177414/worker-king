@@ -76,6 +76,7 @@ describe('screen-awareness tools', () => {
     expect(WORKERKING_TOOL_ALLOWLIST).toEqual([
       'mcp__workerking__get_active_window',
       'mcp__workerking__capture_screen',
+      'mcp__workerking__remember',
     ]);
   });
 });

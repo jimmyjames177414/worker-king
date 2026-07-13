@@ -1,8 +1,9 @@
 import { tool, createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk';
-import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
+import type { McpServerConfig, SdkMcpToolDefinition } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import type { ConfigStore } from '../config/ConfigStore.js';
 import type { ScreenContextProvider } from '../screen/ScreenContextProvider.js';
+import type { MemoryStore, MemoryScope } from '../memory/MemoryStore.js';
 
 /**
  * WorkerKing's in-process SDK tools, exposed to Claude via createSdkMcpServer.
@@ -22,7 +23,9 @@ export const WORKERKING_MCP_SERVER_NAME = 'workerking';
 export interface WorkerKingToolDeps {
   config: Pick<ConfigStore, 'get'>;
   screen: ScreenContextProvider;
-  /** Audit sink; every screen access is recorded. */
+  /** Optional memory store; enables the `remember` tool when present. */
+  memory?: MemoryStore;
+  /** Audit sink; every screen/memory access is recorded. */
   audit?: (event: { tool: string; detail: string }) => void;
 }
 
@@ -100,13 +103,47 @@ export function buildScreenTools(deps: WorkerKingToolDeps) {
   return { getActiveWindow, captureScreen };
 }
 
+/**
+ * The `remember` tool: lets Claude persist a durable fact/preference about the
+ * user mid-task. Gated by `memoryEnabled` (default true). Stored memories are
+ * injected into the persona so they're recalled in later sessions.
+ */
+export function buildMemoryTool(deps: WorkerKingToolDeps) {
+  const enabled = () => deps.config.get('memoryEnabled') !== false && !!deps.memory;
+  return tool(
+    'remember',
+    'Persist a durable fact or preference about the user so you recall it in future ' +
+      'sessions (e.g. their name, tools they use, how they like things done). Use a short ' +
+      'stable key. Updating the same key overwrites the old value.',
+    {
+      key: z.string().describe('Short stable identifier, e.g. "editor" or "timezone".'),
+      value: z.string().describe('The fact to remember.'),
+      scope: z.enum(['preference', 'fact', 'project']).default('fact'),
+    },
+    async (args) => {
+      deps.audit?.({ tool: 'remember', detail: `${args.key}=${args.value}` });
+      if (!enabled()) {
+        return {
+          isError: true,
+          content: [{ type: 'text' as const, text: 'Memory is turned off in WorkerKing settings.' }],
+        };
+      }
+      deps.memory!.remember(args.key, args.value, args.scope as MemoryScope, 'remember-tool');
+      return { content: [{ type: 'text' as const, text: `Remembered "${args.key}".` }] };
+    },
+  );
+}
+
 /** The MCP server config to hand to ClaudeBackend `mcpServers`. */
 export function createWorkerKingToolServer(deps: WorkerKingToolDeps): McpServerConfig {
   const { getActiveWindow, captureScreen } = buildScreenTools(deps);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const tools: Array<SdkMcpToolDefinition<any>> = [getActiveWindow, captureScreen];
+  if (deps.memory) tools.push(buildMemoryTool(deps));
   return createSdkMcpServer({
     name: WORKERKING_MCP_SERVER_NAME,
     version: '0.0.0',
-    tools: [getActiveWindow, captureScreen],
+    tools,
   });
 }
 
@@ -114,4 +151,5 @@ export function createWorkerKingToolServer(deps: WorkerKingToolDeps): McpServerC
 export const WORKERKING_TOOL_ALLOWLIST = [
   `mcp__${WORKERKING_MCP_SERVER_NAME}__get_active_window`,
   `mcp__${WORKERKING_MCP_SERVER_NAME}__capture_screen`,
+  `mcp__${WORKERKING_MCP_SERVER_NAME}__remember`,
 ];

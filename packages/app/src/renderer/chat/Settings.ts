@@ -45,6 +45,7 @@ export class Settings {
       <label>Push-to-talk hotkey<input data-cfg="hotkey" value="${str('hotkey')}"></label>
       <label class="check"><input type="checkbox" data-cfg="wakeWordEnabled" ${checked('wakeWordEnabled')}> Always-listening wake word</label>
       <label class="check"><input type="checkbox" data-cfg="screenAwareness" ${checked('screenAwareness')}> Let it see my screen</label>
+      <label class="check"><input type="checkbox" data-cfg="memoryEnabled" ${checked('memoryEnabled')}> Remember things about me across sessions</label>
       <hr>
       <label>OpenAI API key ${hasKey ? '<span class="ok">✓ saved</span>' : '<span class="warn">not set</span>'}
         <span class="row"><input type="password" id="openai-key" placeholder="sk-..."><button id="save-key">Save</button></span>

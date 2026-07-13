@@ -30,6 +30,7 @@ interface AppConfig {
   claudeHost: 'auto' | 'windows' | 'wsl';
   wakeWordEnabled: boolean;
   screenAwareness: boolean;
+  memoryEnabled: boolean;
   userName?: string;
   characterCard?: unknown;
   [k: string]: unknown;
@@ -47,6 +48,7 @@ const config = new Store<AppConfig>({
     claudeHost: 'auto',
     wakeWordEnabled: false,
     screenAwareness: false,
+    memoryEnabled: true,
   },
 });
 
@@ -60,6 +62,7 @@ const CONFIG_KEYS: Array<keyof AppConfig> = [
   'claudeHost',
   'wakeWordEnabled',
   'screenAwareness',
+  'memoryEnabled',
   'userName',
   'characterCard',
 ];
