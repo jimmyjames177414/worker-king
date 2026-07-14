@@ -9,5 +9,15 @@ coverage/
 *.log
 .vite/
 .turbo/
+# Claude log-runner capture dir (console captures + daemon file log + .pid files)
+tail-logs/
 # WorkerKing runtime handshake file (daemon port + auth token)
 .workerking-handshake.json
+
+# Claude Code — local-only config, vault, and generated artifacts
+.claude/settings.local.json
+.local/
+graphify-out/cost.json
+graphify-out/cache/
+.claude/projects/
+.claude/worktrees/

@@ -1,9 +1,4 @@
-import {
-  GptRealtimeProvider,
-  createRealtimeSessionFactory,
-  createLocalCascadeProvider,
-  type VoiceProvider,
-} from '@workerking/voice-providers';
+import type { VoiceProvider } from '@workerking/voice-providers';
 import { isKind, type JsonValue } from '@workerking/shared';
 import type { WsClient } from '../shared/wsClient.js';
 
@@ -112,8 +107,8 @@ export class VoiceHost {
   private async start(): Promise<void> {
     this.active = true;
     const cascade = this.providerId === 'local-cascade';
-    // GPT Realtime: the model is the brain. Local cascade: Claude (via the daemon
-    // chat path) is the brain, and this provider is pure audio I/O.
+    const { GptRealtimeProvider, createLocalCascadeProvider, createRealtimeSessionFactory } =
+      await import('@workerking/voice-providers');
     const provider: VoiceProvider = cascade
       ? createLocalCascadeProvider()
       : new GptRealtimeProvider({
@@ -182,7 +177,7 @@ export class VoiceHost {
     });
   }
 
-  private async stop(): Promise<void> {
+  async stop(): Promise<void> {
     await this.provider?.stop();
     this.provider = undefined;
     this.active = false;

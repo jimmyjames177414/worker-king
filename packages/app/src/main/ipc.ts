@@ -37,9 +37,10 @@ export function registerIpc(deps: IpcDeps): void {
     };
   });
 
-  // Mint an ephemeral Realtime key. The real key never leaves main.
+  // Mint an ephemeral Realtime key. Stored secret takes precedence; env var is
+  // the dev fallback so you can test without going through the settings UI.
   ipcMain.handle('wk:mint-realtime-key', async () => {
-    const apiKey = getSecret('openai') ?? '';
+    const apiKey = getSecret('openai') ?? process.env['OPENAI_API_KEY'] ?? '';
     return mintEphemeralKey(apiKey, deps.getModel());
   });
 

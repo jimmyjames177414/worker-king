@@ -22,14 +22,17 @@ const api = {
   mintRealtimeKey: (): Promise<string> => ipcRenderer.invoke('wk:mint-realtime-key'),
   /** Subscribe to the global push-to-talk hotkey (fired from main). */
   onPushToTalk: (cb: () => void): void => {
+    ipcRenderer.removeAllListeners('wk:push-to-talk');
     ipcRenderer.on('wk:push-to-talk', () => cb());
   },
   /** Fired after system resume so the renderer can heal its WS connection. */
   onReconnect: (cb: () => void): void => {
+    ipcRenderer.removeAllListeners('wk:reconnect');
     ipcRenderer.on('wk:reconnect', () => cb());
   },
   /** Main asks the overlay to speak text aloud (e.g. an explain-hotkey reply). */
   onSpeak: (cb: (text: string) => void): void => {
+    ipcRenderer.removeAllListeners('wk:speak');
     ipcRenderer.on('wk:speak', (_e, text: string) => cb(text));
   },
 };

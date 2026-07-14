@@ -19,6 +19,7 @@ import { ReminderScheduler } from './proactive/ReminderScheduler.js';
 import { ProactiveManager, defaultWatches } from './proactive/ProactiveManager.js';
 import { detectHost } from './util/host.js';
 import { daemonEnvelopeContext, newToken } from './util/ids.js';
+import { installFileLog } from './util/fileLog.js';
 
 // Process-wide memory store + interaction log (file-based under ~/.claude/workerking).
 const memory = new MemoryStore();
@@ -277,6 +278,9 @@ const isDirectRun =
   (process.argv[1].endsWith('main.ts') || process.argv[1].endsWith('main.js'));
 
 if (isDirectRun) {
+  // Tee stdout/stderr to WORKERKING_LOG_FILE (if set) before anything is printed,
+  // so the READY line and startup logs are captured for the log tailer too.
+  installFileLog();
   startDaemon()
     .then((d) => {
       process.stderr.write(`[workerking] daemon listening on 127.0.0.1:${d.port}\n`);

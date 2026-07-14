@@ -1,11 +1,26 @@
 import { app, globalShortcut, BrowserWindow, powerMonitor, Notification, clipboard } from 'electron';
 import { randomUUID } from 'node:crypto';
+import { createWriteStream } from 'node:fs';
+import { mkdirSync } from 'node:fs';
+import { dirname } from 'node:path';
 import Store from 'electron-store';
+
+// Tee stderr to a log file so the F5 debugger session is visible to Claude.
+if (process.env['WORKERKING_APP_LOG']) {
+  const logPath = process.env['WORKERKING_APP_LOG'];
+  mkdirSync(dirname(logPath), { recursive: true });
+  const logStream = createWriteStream(logPath, { flags: 'a' });
+  const origWrite = process.stderr.write.bind(process.stderr);
+  // @ts-expect-error overriding write signature
+  process.stderr.write = (chunk: unknown, ...args: unknown[]) => {
+    logStream.write(String(chunk));
+    return (origWrite as (...a: unknown[]) => boolean)(chunk, ...args);
+  };
+}
 import { DaemonSupervisor, type DaemonConnection } from './DaemonSupervisor.js';
 import { detectClaude } from './WslDetector.js';
 import { createOverlayWindow } from './windows/OverlayWindow.js';
 import { createChatWindow, toggleChatWindow } from './windows/ChatWindow.js';
-import { registerClickThrough } from './ClickThroughManager.js';
 import { createTray } from './TrayController.js';
 import { registerIpc } from './ipc.js';
 import { DaemonClient } from './DaemonClient.js';
@@ -169,7 +184,13 @@ async function boot(): Promise<void> {
 
   overlay = createOverlayWindow();
   chat = createChatWindow();
-  registerClickThrough(overlay);
+
+  // Forward renderer console output to main stderr so the log runner captures it.
+  for (const [label, win] of [['overlay', overlay], ['chat', chat]] as const) {
+    win.webContents.on('console-message', (_e, level, msg) => {
+      process.stderr.write(`[renderer:${label}] ${msg}\n`);
+    });
+  }
 
   createTray({
     onToggleChat: () => chat && toggleChatWindow(chat),
@@ -203,14 +224,11 @@ function registerHotkey(accelerator: string): void {
   // Re-register just the push-to-talk key (keep the explain key intact).
   if (currentHotkey) globalShortcut.unregister(currentHotkey);
   currentHotkey = accelerator;
-  try {
-    globalShortcut.register(accelerator, () => {
-      // Signal the overlay to toggle the voice session. (Chat opens from the tray
-      // or by clicking the avatar.)
-      overlay?.webContents.send('wk:push-to-talk');
-    });
-  } catch (err) {
-    process.stderr.write(`[workerking] failed to register hotkey "${accelerator}": ${String(err)}\n`);
+  const ok = globalShortcut.register(accelerator, () => {
+    overlay?.webContents.send('wk:push-to-talk');
+  });
+  if (!ok) {
+    process.stderr.write(`[workerking] failed to register hotkey "${accelerator}" (already taken)\n`);
   }
 }
 
@@ -218,10 +236,9 @@ function registerHotkey(accelerator: string): void {
 function registerExplainHotkey(accelerator: string): void {
   if (currentExplainHotkey) globalShortcut.unregister(currentExplainHotkey);
   currentExplainHotkey = accelerator;
-  try {
-    globalShortcut.register(accelerator, () => explainSelection());
-  } catch (err) {
-    process.stderr.write(`[workerking] failed to register explain hotkey "${accelerator}": ${String(err)}\n`);
+  const ok = globalShortcut.register(accelerator, () => explainSelection());
+  if (!ok) {
+    process.stderr.write(`[workerking] failed to register explain hotkey "${accelerator}" (already taken)\n`);
   }
 }
 

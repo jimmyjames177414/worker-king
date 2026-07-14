@@ -1,8 +1,8 @@
 import { BrowserWindow, screen } from 'electron';
 import { join } from 'node:path';
 
-const OVERLAY_WIDTH = 220;
-const OVERLAY_HEIGHT = 260;
+const OVERLAY_WIDTH = 148;
+const OVERLAY_HEIGHT = 148;
 const MARGIN = 24;
 
 /**
@@ -26,7 +26,7 @@ export function createOverlayWindow(): BrowserWindow {
     movable: true,
     skipTaskbar: true,
     alwaysOnTop: true,
-    focusable: true,
+    focusable: false,
     hasShadow: false,
     webPreferences: {
       preload: join(__dirname, '../preload/overlay.js'),
@@ -40,8 +40,8 @@ export function createOverlayWindow(): BrowserWindow {
   win.setAlwaysOnTop(true, 'screen-saver');
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
 
-  // Start fully click-through; the renderer requests solidity over the sprite.
-  win.setIgnoreMouseEvents(true, { forward: true });
+  // Window is sized to the avatar — always solid, no click-through needed.
+  win.setIgnoreMouseEvents(false);
 
   loadRenderer(win, 'overlay');
   return win;
