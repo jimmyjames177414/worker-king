@@ -1,0 +1,38 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug Daemon (core)",
+      "type": "node",
+      "request": "launch",
+      "cwd": "${workspaceFolder}",
+      "program": "${workspaceFolder}/packages/core/dist/main.js",
+      "preLaunchTask": "build: core",
+      "outFiles": ["${workspaceFolder}/packages/core/dist/**/*.js"],
+      "sourceMaps": true,
+      "console": "integratedTerminal",
+      "env": {
+        // Tee the daemon's output to a file the log tailer can read while you debug.
+        "WORKERKING_LOG_FILE": "${workspaceFolder}/tail-logs/app-logs/daemon.log"
+      }
+    },
+    {
+      "name": "Debug App (Electron main + daemon)",
+      "type": "node",
+      "request": "launch",
+      "cwd": "${workspaceFolder}/packages/app",
+      "runtimeExecutable": "${workspaceFolder}/packages/app/node_modules/.bin/electron-vite",
+      "windows": {
+        "runtimeExecutable": "${workspaceFolder}/packages/app/node_modules/.bin/electron-vite.cmd"
+      },
+      "runtimeArgs": ["dev", "--sourcemap"],
+      "preLaunchTask": "build: core",
+      "console": "integratedTerminal",
+      "env": {
+        // Propagates to the daemon the app spawns, so its logs are tailable too.
+        "WORKERKING_LOG_FILE": "${workspaceFolder}/tail-logs/app-logs/daemon.log",
+        "REMOTE_DEBUGGING_PORT": "9222"
+      }
+    }
+  ]
+}

@@ -61,3 +61,27 @@ Run a single package with a filter, e.g. `pnpm --filter @workerking/core run bui
 - **Readiness handshake.** The daemon prints a `WORKERKING_READY {port,token,...}` line on stdout
   once its WS server is listening; the Electron main waits for that before connecting. The runtime
   port+token are also written to the gitignored `.workerking-handshake.json`.
+
+## Log runners for Claude
+
+WorkerKing logs only to the console — nothing hits a file by default, so Claude can't see a running
+session. The log-runner scripts fix that: launch a target with its output captured to a file, then
+snapshot it. (Mirrors Amethyst's `runbook` + `tail-logs`, adapted to this pnpm/Node/Electron repo.)
+
+- Start (backgrounded): `scripts/run-with-logs.ps1 -Target daemon|app` (extra args via `-ExtraArgs '...'`)
+- Snapshot logs: `scripts/tail-logs.ps1 [-Target all|daemon|app] [-Lines N] [-Errors]`
+- Bounded follow: `scripts/tail-logs.ps1 -Follow -Timeout 5` (always time-bounded; never blocks)
+- Stop everything: `scripts/stop-logs.ps1` (tree-kill; leaves `.log` files for post-mortem)
+
+Two log sources, both read by `tail-logs.ps1` (everything under `tail-logs/` is gitignored):
+- `tail-logs/<target>.log` — merged stdout+stderr captured by the runner
+- `tail-logs/app-logs/daemon.log` — the daemon's *own* file log, written whenever
+  `WORKERKING_LOG_FILE` is set (the runners, the VS Code tasks, and both F5 profiles all set it)
+
+Equivalent VS Code tasks: **Run Daemon/App (Claude Logs)**, **Tail Logs**, **Tail Logs (errors)**,
+**Stop Log Runners**.
+
+**F5 debugging.** `launch.json` has two profiles — **Debug Daemon (core)** (plain Node, TS
+breakpoints via source maps) and **Debug App (Electron main + daemon)**. Both run the `build: core`
+preLaunchTask and set `WORKERKING_LOG_FILE`, so even while you debug, the daemon tees to
+`tail-logs/app-logs/daemon.log` and Claude can `tail-logs.ps1 -Follow` alongside the debug session.

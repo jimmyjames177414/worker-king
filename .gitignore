@@ -9,6 +9,8 @@ coverage/
 *.log
 .vite/
 .turbo/
+# Claude log-runner capture dir (console captures + daemon file log + .pid files)
+tail-logs/
 # WorkerKing runtime handshake file (daemon port + auth token)
 .workerking-handshake.json
 
