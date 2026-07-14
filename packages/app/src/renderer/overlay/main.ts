@@ -22,7 +22,7 @@ const bridge = (window as unknown as {
   };
 }).workerking;
 
-async function main(): Promise<void> {
+async function main(): Promise<VoiceHost | undefined> {
   const avatarEl = document.getElementById('avatar');
   if (!avatarEl) throw new Error('avatar element missing');
   const avatar = new AvatarController(avatarEl);
@@ -30,10 +30,6 @@ async function main(): Promise<void> {
   const captionsEl = document.getElementById('captions');
   const captions = captionsEl ? new Captions(captionsEl) : undefined;
 
-  // Hover makes the overlay solid so the avatar is interactive; leaving restores
-  // full click-through to the desktop.
-  avatarEl.addEventListener('mouseenter', () => bridge.setClickThrough(false));
-  avatarEl.addEventListener('mouseleave', () => bridge.setClickThrough(true));
 
   let client;
   try {
@@ -90,6 +86,12 @@ async function main(): Promise<void> {
     return capabilitySummary ? `${base}\n\n${capabilitySummary}` : base;
   });
 
+  // Click on the avatar toggles voice (hotkey is wired inside VoiceHost constructor).
+  avatarEl.addEventListener('click', () => {
+    console.log('[workerking] avatar clicked');
+    void voiceHost.toggle();
+  });
+
   // Wake word (2.3, opt-in): when enabled in config, "Hey <name>" triggers the
   // same session start as the hotkey. Detector is a no-op until a real model is
   // installed (see WakeWord.ts).
@@ -114,6 +116,15 @@ async function main(): Promise<void> {
     captions?.show('assistant', text);
     void voiceHost.speak(text);
   });
+
+  return voiceHost;
 }
 
-main();
+let _voiceHost: VoiceHost | undefined;
+void main().then((h) => { _voiceHost = h; });
+
+// Close the voice session on page unload so OpenAI doesn't hold a stale session
+// across HMR reloads or F5 restarts.
+window.addEventListener('beforeunload', () => {
+  void _voiceHost?.stop();
+});

@@ -2,12 +2,23 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "build: core",
-      "detail": "Build @workerking/core and its deps (shared) — needed before running/debugging the daemon or the app (which spawns the built daemon).",
+      "label": "build: shared",
+      "detail": "Build @workerking/shared (the WS protocol + types contract).",
       "type": "shell",
       "command": "pnpm",
-      "args": ["--filter", "...@workerking/core", "run", "build"],
+      "args": ["--filter", "@workerking/shared", "run", "build"],
       "group": "build",
+      "problemMatcher": ["$tsc"]
+    },
+    {
+      "label": "build: core",
+      "detail": "Build @workerking/shared then @workerking/core — needed before running/debugging the daemon or the app (which spawns the built daemon).",
+      "type": "shell",
+      "command": "pnpm",
+      "args": ["--filter", "@workerking/core", "run", "build"],
+      "group": "build",
+      "dependsOn": ["build: shared"],
+      "dependsOrder": "sequence",
       "problemMatcher": ["$tsc"]
     },
     {

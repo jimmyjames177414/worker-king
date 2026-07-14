@@ -12,6 +12,9 @@ export default defineConfig({
     build: {
       outDir: 'out/main',
       lib: { entry: resolve(__dirname, 'src/main/index.ts') },
+      rollupOptions: {
+        external: ['bufferutil', 'utf-8-validate'],
+      },
     },
   },
   preload: {
@@ -27,6 +30,13 @@ export default defineConfig({
   },
   renderer: {
     root: resolve(__dirname, 'src/renderer'),
+    server: {
+      watch: {
+        // Workspace package build outputs change during preLaunchTask builds.
+        // Ignore them so Vite HMR doesn't storm-reload the renderer on every build.
+        ignored: [/packages[\\/]\w+[\\/]dist[\\/]/, /packages[\\/]\w+[\\/]out[\\/]/],
+      },
+    },
     build: {
       outDir: 'out/renderer',
       rollupOptions: {

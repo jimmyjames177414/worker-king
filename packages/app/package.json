@@ -13,6 +13,7 @@
     "package": "electron-vite build && electron-builder --win"
   },
   "dependencies": {
+    "@workerking/core": "workspace:*",
     "@workerking/shared": "workspace:*",
     "@workerking/voice-providers": "workspace:*",
     "electron-store": "^10.0.0",
