@@ -1,4 +1,8 @@
-# WorkerKing — Refactoring Health Assessment (lessons from `5uck1ess/cicero`)
+# WorkerKing — Refactoring Health Assessment (lessons from like-minded repos)
+
+> Round 1 (below) draws on `5uck1ess/cicero`. **Round 2** (appended at the end) widens the survey to
+> `metaspartan/cybara`, `voltagent/voltagent`, and LiveKit/Pipecat voice-pipeline practice, turning
+> their lessons into 15 verified, prioritized improvements (N1–N15).
 
 ## Context
 
@@ -173,3 +177,156 @@ Whatever subset is executed, the gate is the same and already wired:
 
 The `/verify` skill runs build → typecheck → headless tests in order and stops on first failure — use
 it as the one-command gate after each stage.
+
+---
+
+# Round 2 — Lessons from like-minded repos → new improvements
+
+## Context
+
+Round 1 mined a single sibling (`5uck1ess/cicero`) and found WorkerKing structurally healthy. This
+round widens the net to other self-hosted AI-agent runtimes, voice pipelines, and TS agent frameworks
+to harvest lessons that turn into *behavioral / robustness* improvements — beyond the Round 1 DRY
+cleanups. Each item below was verified against the actual WorkerKing code (file:line) so these are
+real gaps, not style opinions.
+
+### Reference repos surveyed
+
+- **[`metaspartan/cybara`](https://github.com/metaspartan/cybara)** — Bun self-hosted agent runtime.
+  Lessons: *tool **policy** is separate from tool **availability*** ("effective policy-filtered subset,
+  not the full catalog every turn" — anti prompt-injection/scope-creep); provider **router + plan/quota
+  monitoring** against rolling windows/budgets; multi-modal memory (vector + markdown + logs);
+  path-sandbox / SSRF protection; session **context compaction**; checkpoints + rollback.
+- **[`voltagent/voltagent`](https://github.com/voltagent/voltagent)** — TS agent framework. Lessons:
+  **guardrails as runtime validators** in the exec loop (validate input *and* output); **tracing as
+  first-class infrastructure** (spans/durations, not bolt-on logs); **evals embedded in the dev loop**;
+  Zod-typed tools with **lifecycle hooks + cancellation**; workflow **suspend/resume** for HITL.
+- **LiveKit Agents / Pipecat** (voice-pipeline art) — Lessons: streaming turns total latency from
+  `sum(VAD,STT,LLM,TTS)` into `max(...)`; **barge-in = detect → stop TTS → flush queue → cancel
+  generation → restart STT**; **model-based turn detection** beats silence thresholds; conversational
+  turn-taking breaks above ~1–2s latency (so you must measure it).
+- **cicero `security.md` / `duplex.md`** — Lessons: **"config is code execution, by design — never
+  load a config you didn't write"**; **fail-closed confirmation gates** for destructive tools, one
+  approval = one call, "treat the voice port as an unauthenticated houseguest"; byte-caps on all
+  inbound data; barge-in needs explicit generation cancellation, not just TTS stop.
+
+## Verdict (round 2)
+
+The *architecture* is still sound, but the **real-time voice path, the tool-security posture, and
+runtime observability are the three areas where WorkerKing lags the more mature siblings** — and each
+gap was confirmed in code. These are additive features/hardening, not refactors.
+
+## New improvements — prioritized
+
+### P0 — highest value (correctness + safety), do first
+
+- **N1 · Gate the Claude Code toolset (security).** Today `permissionMode`, `canUseTool`, and
+  `disallowedTools` are declared but **never set** (`packages/core/src/claude/ClaudeBackend.ts:40,72`;
+  `main.ts` `claudeOpts` omits them). The static `WORKERKING_TOOL_ALLOWLIST`
+  (`tools.ts:302-310`) only covers the 7 in-house `mcp__workerking__*` tools; the SDK's Bash/Write/Edit
+  ride the `claude_code` preset **ungated and un-sandboxed**. Since voice is an unauthenticated
+  interface, add a `canUseTool` confirmation gate — **fail-closed, one-approval-per-call** for
+  destructive tools (cicero `confirm_tools`; cybara policy-filtered subset). Wire an explicit
+  `permissionMode` and set it from config. *Files:* `ClaudeBackend.ts` `buildOptions()`,
+  `main.ts` `claudeOpts`, plus a new confirmation message kind in `shared/protocol.ts`.
+- **N2 · Fix the barge-in stale-reply race (correctness).** On barge-in the local cascade stops TTS
+  but **never cancels brain generation**, and when the stale reply resolves it is spoken
+  unconditionally (`packages/app/src/renderer/overlay/VoiceHost.ts:159`;
+  `LocalCascadeProvider.ts:60-66`). Add a **per-turn epoch/`turnId`**: stamp each turn, drop any
+  `chat.assistant_*` whose turn is no longer current, and cancel the in-flight daemon turn on barge-in
+  (the daemon already has abort plumbing via `TaskManager`/`ClaudeBackend.run`’s `AbortController`).
+  (LiveKit barge-in; cicero duplex.)
+- **N3 · Sentence-stream the voice path (latency).** Voice waits for `chat.assistant_done` then
+  synthesizes the whole response — latency ≈ **sum** of stages (`VoiceHost.ts:163-177` →
+  `LocalCascadeProvider.speak(text)`). The daemon **already emits `chat.assistant_delta`**
+  (`Supervisor.ts:140-143`), consumed only by the chat window. Consume those deltas in `VoiceHost`,
+  chunk on sentence boundaries, and feed TTS incrementally so speech starts on the first sentence
+  (latency ≈ **max**). Biggest perceived-speed win; reuses infra that already exists.
+
+### P1 — high value
+
+- **N4 · `sanitizeForSpeech()` seam (correctness + a guardrail hook).** Brain text goes to TTS raw —
+  markdown, code fences, `**bold**`, and any reasoning are voiced literally (`LocalCascadeProvider.ts:99-108`;
+  no sanitizer exists). Add one shared sanitizer on the speech path; make it the natural home for a
+  **VoltAgent-style output guardrail** (strip/deny before speaking or acting). Directly fixes cicero's
+  `<think>`-leaked-into-TTS lesson.
+- **N5 · Frame untrusted content (prompt-injection).** Screen titles, screenshots, and remembered
+  facts flow into a Bash/Write/Edit-capable agent with **no provenance framing** (`tools.ts:79-116`;
+  memory injected into the system prompt via `computePersonaAppend`, `main.ts:92-97`). Wrap
+  screen/window/memory content in explicit "untrusted external data" delimiters/spotlighting, tag
+  provenance, and consider dropping to a **read-only tool policy** (composes with N1) while acting on
+  screen-derived input. (cicero untrusted-input; cybara.)
+- **N6 · Rate-limit / usage-cap awareness (robustness).** `normalizeError`
+  (`ClaudeBackend.ts:190-205`) only classifies **auth** errors; a 429, a Pro/Max 5-hour cap, or a
+  `Retry-After` becomes an anonymous generic `Error` — no backoff, no user-facing "you're rate-limited,
+  try later." Add a `ClaudeRateLimitError` class + detection + surfaced message (and optional backoff).
+  (cybara provider-plan monitoring.)
+- **N7 · Voice-turn latency telemetry (observability).** No instrumentation exists across the turn.
+  Capture timestamps at utterance-end → STT-done → brain-first-token → first-audio-out behind the
+  existing `logger.ts` (it already supports `WORKERKING_LOG_JSON`). This is the concrete form of Round
+  1's item 3d; without it you can't tell if you meet the <1–2s turn-taking budget. (LiveKit/Pipecat.)
+
+### P2 — worthwhile
+
+- **N8 · Trace correlation id (observability).** The WS envelope already mints a per-message
+  `randomUUID` (`ids.ts:10-13`) but it **never reaches the logger** — logs carry only static scopes.
+  Thread a per-turn/per-task correlation id through `logger.child` scopes across Supervisor →
+  ClaudeBackend → TaskManager so a turn is traceable end-to-end. (VoltAgent tracing-as-infrastructure.)
+- **N9 · Capture SDK usage (observability).** The SDK `result` message carries `usage`/cost fields
+  that are currently ignored (`ClaudeBackend.ts:103-114`) — record them per turn to enable budget
+  awareness and to feed N6. (cybara plan monitoring.)
+- **N10 · Behavior eval harness (quality).** All tests are deterministic unit tests over pure
+  functions and faked SDK plumbing (`routing.test.ts`, `personaSelect.test.ts`, `ClaudeBackend.test.ts`)
+  — no test exercises actual response quality. Add a small golden-transcript / LLM-as-judge eval
+  (opt-in `pnpm eval`, not in the headless gate) for routing, persona assembly, and speech
+  sanitization. Voice output is fuzzy — cicero's #1 process lesson was "test voice patterns early."
+  (VoltAgent evals-in-loop.)
+- **N11 · Electron + config hardening.** Set `sandbox: true` on the windows where the preload allows
+  it (`OverlayWindow.ts:35`, `ChatWindow.ts:20` are `false`), add `setWindowOpenHandler` +
+  `will-navigate` deny handlers (currently absent — only CSP guards navigation), and treat config as a
+  trust boundary: the Round-1 zod config schema (1a) should **validate on load** and reject
+  executable-ish fields, per cicero's "config is code execution." Also add byte-caps on WS payloads.
+
+### P3 — optional / larger
+
+- **N12 · Durable, resumable tasks.** `TaskManager` is in-memory and evicts tasks on completion
+  (`TaskManager.ts:153`) — no persistence, suspend/resume, or HITL pause. Persist task state and add
+  suspend/resume + an approval gate to survive daemon restarts. (cybara checkpoints/rollback;
+  VoltAgent suspend/resume.) Bigger change — defer unless delegated tasks need to outlive restarts.
+- **N13 · Semantic turn detection** (model-based endpointing vs Silero-VAD-only) and
+  **N14 · conversation summarization** on truncation (`ConversationStore.append` drops oldest messages
+  with no summary, `ConversationStore.ts:108-110`) and **N15 · screenshot redaction / per-capture
+  consent** (currently a coarse `screenAwareness` flag, no per-shot gate or PII scrub). All nice-to-have.
+
+### Recommended sequence
+
+**N1 → N2 → N3** first (one safety, two voice-UX), then **N4/N6/N7**. N1 and N5 compose (both touch
+tool policy); N4 and N3 touch the same `VoiceHost`/`LocalCascadeProvider` speak path, so do them
+together. N7/N8/N9 are the observability cluster; land N7 with N3 so you can measure the latency win.
+
+## Round-2 critical files
+
+- Tool gating / policy: `packages/core/src/claude/ClaudeBackend.ts` (`buildOptions`),
+  `packages/core/src/main.ts` (`claudeOpts`), `packages/core/src/claude/tools.ts`,
+  `packages/shared/src/protocol.ts` (new confirmation kind)
+- Voice barge-in / streaming / sanitize: `packages/app/src/renderer/overlay/VoiceHost.ts`,
+  `packages/voice-providers/src/LocalCascadeProvider.ts`, `packages/core/src/supervisor/Supervisor.ts`
+- Robustness / observability: `packages/core/src/claude/ClaudeBackend.ts` (`normalizeError`, usage),
+  `packages/core/src/util/logger.ts`, `packages/core/src/util/ids.ts`
+- Hardening: `packages/app/src/main/windows/OverlayWindow.ts`, `.../windows/ChatWindow.ts`,
+  `packages/core/src/config/ConfigStore.ts` (validate-on-load)
+
+## Round-2 verification
+
+Same gate as Round 1 (`/verify`: build → typecheck → `test:headless`), plus per-item:
+
+- **N1/N5:** unit-test the `canUseTool` gate (destructive call denied without approval; approval =
+  exactly one call) and that screen-derived turns get the read-only policy. Manual: speak a
+  file-deleting request and confirm it fail-closes.
+- **N2/N3/N4:** extend `VoiceHost`/`LocalCascadeProvider` tests — stale-turn reply is dropped after a
+  new turn starts; deltas are chunked to TTS on sentence boundaries; markdown/code is stripped before
+  `tts.speak`. Run `pnpm daemon` + overlay to hear first-sentence-early-out.
+- **N6:** feed a faked 429 SDK result through `normalizeError` and assert `ClaudeRateLimitError`.
+- **N7/N8/N9:** with `WORKERKING_LOG_JSON=1`, assert one structured line per turn carrying the
+  correlation id and the stage timestamps/usage.
+- **N10:** `pnpm eval` runs the golden/LLM-judge suite green (kept out of the CI headless gate).
