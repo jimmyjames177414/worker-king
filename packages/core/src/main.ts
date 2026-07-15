@@ -21,6 +21,9 @@ import { ProactiveManager, defaultWatches } from './proactive/ProactiveManager.j
 import { detectHost } from './util/host.js';
 import { daemonEnvelopeContext, newToken } from './util/ids.js';
 import { installFileLog } from './util/fileLog.js';
+import { createLogger } from './util/logger.js';
+
+const log = createLogger({ scope: 'workerking' });
 
 // Process-wide memory store + interaction log (file-based under ~/.claude/workerking).
 const memory = new MemoryStore();
@@ -156,7 +159,7 @@ async function resolveBrain(
     memoryIndex,
     proactiveNotify,
     scheduleReminder,
-    audit: (e) => process.stderr.write(`[workerking][tool] ${e.tool}: ${e.detail}\n`),
+    audit: (e) => log.child('tool').info(e.tool, { detail: e.detail }),
   });
   const claudeOpts = {
     cwd,
@@ -175,7 +178,7 @@ async function resolveBrain(
     });
     registerDisposable(cm);
     cm.start().catch((e) =>
-      process.stderr.write(`[workerking] capability manifest build failed: ${String(e)}\n`),
+      log.warn('capability manifest build failed', { error: String(e) }),
     );
 
     // Nightly memory consolidation (Letta sleep-time), when memory is enabled.
@@ -208,14 +211,14 @@ async function resolveBrain(
 
   const health = await probeClaude(cwd);
   if (health.ok) {
-    process.stderr.write('[workerking] Claude Code ready — using ClaudeBackend\n');
+    log.info('Claude Code ready — using ClaudeBackend');
     deferred.set(createClaudeBackend(claudeOpts));
     startCapabilities();
   } else {
-    process.stderr.write(
-      `[workerking] Claude Code unavailable (${health.detail ?? 'unknown'}); ` +
-        'falling back to EchoBrain. Run `claude login` and restart for the real brain.\n',
-    );
+    log.warn('Claude Code unavailable; falling back to EchoBrain', {
+      detail: health.detail ?? 'unknown',
+      hint: 'Run `claude login` and restart for the real brain.',
+    });
     deferred.set(new EchoBrain());
   }
 }
@@ -292,7 +295,7 @@ if (isDirectRun) {
   installFileLog();
   startDaemon()
     .then((d) => {
-      process.stderr.write(`[workerking] daemon listening on 127.0.0.1:${d.port}\n`);
+      log.info('daemon listening', { address: `127.0.0.1:${d.port}` });
       const shutdown = () => {
         d.stop().finally(() => process.exit(0));
       };
@@ -300,7 +303,7 @@ if (isDirectRun) {
       process.on('SIGTERM', shutdown);
     })
     .catch((err) => {
-      process.stderr.write(`[workerking] daemon failed to start: ${String(err)}\n`);
+      log.error('daemon failed to start', { error: String(err) });
       process.exit(1);
     });
 }
