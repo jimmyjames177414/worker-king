@@ -1,7 +1,8 @@
 import type { Options, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
-import type {
-  CapabilityManifest,
-  CapabilityManifestEntry,
+import {
+  deriveRoutingHints,
+  type CapabilityManifest,
+  type CapabilityManifestEntry,
 } from '@workerking/shared';
 
 /**
@@ -44,28 +45,34 @@ export function mapToEntries(
   const entries: CapabilityManifestEntry[] = [];
 
   for (const c of commands) {
+    const description = c.description ?? '';
     entries.push({
-      kind: 'skill',
+      kind: 'command',
       name: c.name,
-      description: c.description ?? '',
+      description,
       source: 'user',
+      routingHints: deriveRoutingHints(c.name, description),
     });
   }
   for (const a of agents) {
+    const description = a.description ?? '';
     entries.push({
       kind: 'agent',
       name: a.name,
-      description: a.description ?? '',
+      description,
       source: 'user',
+      routingHints: deriveRoutingHints(a.name, description),
     });
   }
   for (const m of mcp) {
+    const description = `MCP server (${m.status})`;
     entries.push({
       kind: 'mcp_server',
       name: m.name,
-      description: `MCP server (${m.status})`,
+      description,
       source: 'user',
       status: mapMcpStatus(m.status),
+      routingHints: deriveRoutingHints(m.name, ''),
     });
   }
   return entries;

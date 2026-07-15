@@ -23,8 +23,16 @@ describe('mapToEntries', () => {
       [{ name: 'reviewer', description: 'reviews code' }],
       [{ name: 'github', status: 'connected' }, { name: 'db', status: 'failed' }],
     );
-    expect(entries).toContainEqual({ kind: 'skill', name: 'deploy', description: 'ship it', source: 'user' });
-    expect(entries).toContainEqual({ kind: 'agent', name: 'reviewer', description: 'reviews code', source: 'user' });
+    expect(entries.find((e) => e.name === 'deploy')).toMatchObject({
+      kind: 'command',
+      description: 'ship it',
+      source: 'user',
+    });
+    expect(entries.find((e) => e.name === 'deploy')?.routingHints).toContain('deploy');
+    expect(entries.find((e) => e.name === 'reviewer')).toMatchObject({
+      kind: 'agent',
+      description: 'reviews code',
+    });
     expect(entries.find((e) => e.name === 'github')?.status).toBe('connected');
     expect(entries.find((e) => e.name === 'db')?.status).toBe('error');
   });
