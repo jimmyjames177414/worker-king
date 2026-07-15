@@ -358,3 +358,79 @@ Landed on `claude/app-refactoring-assessment-s2x2ph`, each committed separately,
 **Deferred (bigger / need UI or a runner):** Stage 2 god-file decomposition (2a/2b), N10 eval harness,
 N12 durable/resumable tasks, N13 semantic turn detection, N14 conversation summarization, N15
 screenshot redaction, and a Settings control to switch `toolPermissionMode` from the app UI.
+
+---
+
+# Next up (approved): 2a decomposition, then N10 eval harness
+
+## Context
+
+The one item everything else in `core` hangs off — `packages/core/src/main.ts` — still declares five
+**module-scope mutable singletons** (`memory`, `interactionLog`, `conversations`, `watchStore`,
+`reminderStore`, plus `log`) that are constructed *at import time*. That means importing `main.ts` in a
+test touches `~/.claude/workerking` on disk, the stores can't be swapped for fakes, and `startDaemon`
+is hard to exercise in isolation. This is the last structural smell from Round 1 (Stage 2a). N1 stays
+at `gated` (the recommended, safe default) — no change there.
+
+Goal: make the daemon's dependencies **injected**, not global, mirroring the DI already used by
+`DaemonSupervisor`/`ClaudeBackend` (both take injected `spawnFn`/`queryFn`). Then add an opt-in eval
+harness (N10) so the fuzzy pieces have regression coverage that lives outside the CI gate.
+
+## Phase 1 — 2a: inject the daemon's stores (low risk, headless-testable)
+
+- **Introduce `DaemonDeps`** in `main.ts`: `{ memory, interactionLog, conversations, watchStore,
+  reminderStore, log }`, plus a `createDaemonDeps()` factory that builds the real file-backed stores
+  (the code currently at `main.ts:34-38`). Nothing is constructed at module scope anymore, so importing
+  `main.ts` has no filesystem side effects.
+- **Thread deps through the wiring**, replacing every closure over the old globals:
+  - `computePersonaAppend(config)` → `computePersonaAppend(config, memory)` (`main.ts:81,96`). Update
+    its three call sites in `packages/core/src/persona/personaSelect.test.ts` to pass a `MemoryStore`
+    (this also makes that test deterministic instead of reading the real home dir).
+  - `resolveBrain(...)` gains a `deps` parameter and uses `deps.memory` / `deps.interactionLog` /
+    `deps.watchStore` / `deps.reminderStore` (the distiller at `main.ts:~205` and proactive wiring).
+  - `startDaemon` builds `deps` (from a new optional `opts.deps` merged over `createDaemonDeps()`) and
+    passes them into `resolveBrain` and the `Supervisor` constructor (already takes
+    `interactionLog`, `conversations`, and the `log` added for N8).
+- **Add `deps?: Partial<DaemonDeps>` to `StartDaemonOptions`** so tests inject in-memory / temp-dir
+  stores. The public boot path (`isDirectRun`) is unchanged — it just calls `startDaemon()`.
+- **Reuse, don't rebuild:** the stores already accept a `dir`/persistence option (e.g. `ConfigStore`,
+  `MemoryStore`); tests point them at a `mkdtemp` dir. No store internals change.
+
+Deliberately *not* splitting `main.ts` into multiple files in this phase — the mutable-global removal is
+the substance and is low-risk; a cosmetic file split can follow if it still reads long.
+
+## Phase 2 — N10: opt-in eval harness (new capability, outside CI)
+
+- **New `packages/core/src/eval/` runner** invoked by a root `pnpm eval` script (added to
+  `package.json`, **not** part of `test:headless`, so CI stays fast and deterministic).
+- **Golden cases** for the deterministic, fuzzy-prone pieces — reusing existing pure functions:
+  - routing: `routeRequest`/`scoreCapability` (`packages/shared/src/routing.ts`) over a table of
+    `query → expected capability`.
+  - persona assembly: `assemblePersonaFromCard`/`computePersonaAppend` on a sample card+config.
+  - speech: `sanitizeForSpeech` / `SentenceChunker` (`packages/shared/src/speech.ts`) over tricky
+    markdown/streaming inputs.
+- **Optional LLM-judge tier**, gated behind `WORKERKING_EVAL_LLM=1` and a reachable Claude (reusing
+  `probeClaude` + `createClaudeBackend`): runs a handful of prompts and scores the replies with an
+  LLM-as-judge prompt. Skips cleanly (logs "skipped") when Claude is unavailable, so the harness is
+  always runnable. Report a pass/fail summary and non-zero exit on regressions.
+
+## Critical files
+
+- Decomposition: `packages/core/src/main.ts` (deps interface + factory + threading),
+  `packages/core/src/persona/personaSelect.test.ts` (call-site + new deterministic assertions).
+- Reuse: `ConfigStore`/`MemoryStore`/`ConversationStore`/`WatchStore`/`ReminderStore` (existing
+  `dir`/persist options), `Supervisor` ctor, `probeClaude`/`createClaudeBackend`.
+- Eval: new `packages/core/src/eval/*` + a root `eval` script in `package.json`; goldens over
+  `shared/routing.ts` and `shared/speech.ts`.
+
+## Verification
+
+- **2a:** `pnpm --filter @workerking/core test` — existing `daemon.test.ts` (end-to-end over
+  `startDaemon`) must stay green, proving the wiring is unchanged. Add a test that calls
+  `startDaemon({ brainMode: 'echo', deps: { memory: <temp-dir MemoryStore>, … } })` and asserts a
+  remembered fact injected into the temp store surfaces in `computePersonaAppend`. Confirm importing
+  `main.ts` no longer writes to `~/.claude` (point deps at a temp dir in the test). Then the full gate:
+  `pnpm build && pnpm typecheck && pnpm test:headless && pnpm lint`.
+- **N10:** `pnpm eval` exits 0 on the goldens and non-zero when a golden is deliberately broken;
+  `WORKERKING_EVAL_LLM=1 pnpm eval` runs the judge tier locally (and skips gracefully without Claude).
+  `pnpm test:headless` is unaffected (eval is separate).

@@ -30,13 +30,6 @@ import { createLogger } from './util/logger.js';
 
 const log = createLogger({ scope: 'workerking' });
 
-// Process-wide memory store + interaction log (file-based under ~/.claude/workerking).
-const memory = new MemoryStore();
-const interactionLog = new InteractionLog();
-const conversations = new ConversationStore();
-const watchStore = new WatchStore();
-const reminderStore = new ReminderStore();
-
 /** The Voyager-pattern nudge: encourage Claude to grow its own skills. */
 const SELF_AUTHOR_NUDGE =
   'If you find yourself doing the same multi-step task more than once, offer to save it as a ' +
@@ -44,6 +37,31 @@ const SELF_AUTHOR_NUDGE =
   '(and voice-routable) next time.';
 
 export const DAEMON_VERSION = '0.0.0';
+
+/**
+ * The daemon's stateful, file-backed stores. Injected rather than declared at
+ * module scope so a test can point them at a temp dir (or fakes) and merely
+ * importing this module has no filesystem side effects — the same
+ * dependency-injection style already used by `DaemonSupervisor`/`ClaudeBackend`.
+ */
+export interface DaemonDeps {
+  memory: MemoryStore;
+  interactionLog: InteractionLog;
+  conversations: ConversationStore;
+  watchStore: WatchStore;
+  reminderStore: ReminderStore;
+}
+
+/** Build the real file-backed stores, overriding any provided (tests inject). */
+export function createDaemonDeps(overrides: Partial<DaemonDeps> = {}): DaemonDeps {
+  return {
+    memory: overrides.memory ?? new MemoryStore(),
+    interactionLog: overrides.interactionLog ?? new InteractionLog(),
+    conversations: overrides.conversations ?? new ConversationStore(),
+    watchStore: overrides.watchStore ?? new WatchStore(),
+    reminderStore: overrides.reminderStore ?? new ReminderStore(),
+  };
+}
 
 export interface StartDaemonOptions {
   port?: number;
@@ -57,6 +75,8 @@ export interface StartDaemonOptions {
    * echo; 'claude' requires Claude; 'echo' is the no-AI Phase 0 brain.
    */
   brainMode?: 'auto' | 'claude' | 'echo';
+  /** Inject stores (tests point these at a temp dir); real ones built otherwise. */
+  deps?: Partial<DaemonDeps>;
 }
 
 export interface RunningDaemon {
@@ -78,7 +98,10 @@ export interface RunningDaemon {
  * imported (Handlebars-assembled), else the simple name+personality form. Read
  * live per message so settings/card changes apply without a restart.
  */
-export function computePersonaAppend(config: ConfigStore): string {
+export function computePersonaAppend(
+  config: ConfigStore,
+  memory?: Pick<MemoryStore, 'summary'>,
+): string {
   let base: string;
   const card = config.get('characterCard');
   if (card) {
@@ -94,7 +117,7 @@ export function computePersonaAppend(config: ConfigStore): string {
 
   // Layer in remembered facts (always in context) + the self-authoring nudge.
   const parts = [base, SELF_AUTHOR_NUDGE];
-  if (config.get('memoryEnabled') !== false) {
+  if (memory && config.get('memoryEnabled') !== false) {
     const mem = memory.summary();
     if (mem) parts.push(mem);
   }
@@ -111,8 +134,10 @@ async function resolveBrain(
   server: WsServer,
   mode: 'auto' | 'claude',
   registerDisposable: (d: Disposable) => void,
+  deps: DaemonDeps,
   proactiveHolder: { manager?: ProactiveManager } = {},
 ): Promise<void> {
+  const { memory, interactionLog, watchStore, reminderStore } = deps;
   const cwd = config.get('claudeCwd') as string | undefined;
 
   // Proactive channel: reminders + notify tool → proactive.notify broadcast.
@@ -184,7 +209,7 @@ async function resolveBrain(
   const claudeOpts = {
     cwd,
     // Live persona: re-read config (incl. character card) on every message.
-    personaProvider: () => computePersonaAppend(config),
+    personaProvider: () => computePersonaAppend(config, memory),
     mcpServers: { workerking: toolServer },
     allowedTools: WORKERKING_TOOL_ALLOWLIST,
     canUseTool,
@@ -269,6 +294,8 @@ export async function startDaemon(opts: StartDaemonOptions = {}): Promise<Runnin
   // Headless daemon: persist config so a standalone run doesn't reset on restart.
   const config = new ConfigStore(undefined, { persist: true });
   const server = new WsServer({ token, host, daemonVersion: DAEMON_VERSION });
+  // Stores are injected (tests) or built here — never module-global.
+  const deps = createDaemonDeps(opts.deps);
 
   // Pick the brain without blocking boot: an injected brain or the echo brain is
   // used directly; otherwise a DeferredBrain is installed now and the real Claude
@@ -295,6 +322,7 @@ export async function startDaemon(opts: StartDaemonOptions = {}): Promise<Runnin
       server,
       mode,
       (d) => disposables.push(d),
+      deps,
       proactiveHolder,
     ).catch(() => {});
   }
@@ -302,10 +330,10 @@ export async function startDaemon(opts: StartDaemonOptions = {}): Promise<Runnin
     server,
     config,
     brain,
-    interactionLog,
-    conversations,
+    deps.interactionLog,
+    deps.conversations,
     {
-      store: watchStore,
+      store: deps.watchStore,
       reload: (watches) => proactiveHolder.manager?.reload(watches),
     },
     log,
