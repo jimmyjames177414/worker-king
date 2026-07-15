@@ -63,6 +63,16 @@ export class Settings {
     const hostOpts = ['auto', 'windows', 'wsl']
       .map((h) => `<option value="${h}" ${cfg.claudeHost === h ? 'selected' : ''}>${h}</option>`)
       .join('');
+    const permOpts = [
+      ['gated', 'Ask before file/shell changes (recommended)'],
+      ['auto', 'Allow all tools without asking'],
+      ['readonly', 'Never allow file/shell changes'],
+    ]
+      .map(
+        ([v, label]) =>
+          `<option value="${v}" ${(cfg.toolPermissionMode ?? 'gated') === v ? 'selected' : ''}>${label}</option>`,
+      )
+      .join('');
     const themeOpts = [
       ['system', 'System'],
       ['light', 'Light'],
@@ -81,6 +91,7 @@ export class Settings {
       <label>Microphone<select data-cfg="inputDeviceId">${deviceOpts('audioinput', cfg.inputDeviceId)}</select></label>
       <label>Speaker<select data-cfg="outputDeviceId">${deviceOpts('audiooutput', cfg.outputDeviceId)}</select></label>
       <label>Claude host<select data-cfg="claudeHost">${hostOpts}</select></label>
+      <label>Tool permissions<select data-cfg="toolPermissionMode">${permOpts}</select></label>
       <label>Push-to-talk hotkey<input data-cfg="hotkey" data-hotkey readonly value="${str('hotkey')}" placeholder="Click, then press keys"></label>
       <label>"Explain selection" hotkey<input data-cfg="explainHotkey" data-hotkey readonly value="${str('explainHotkey')}" placeholder="Click, then press keys"></label>
       <label class="check"><input type="checkbox" data-cfg="wakeWordEnabled" ${checked('wakeWordEnabled')}> Always-listening wake word</label>
