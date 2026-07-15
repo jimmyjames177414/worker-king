@@ -1,4 +1,5 @@
 import { characterCardV2Schema } from '@workerking/shared';
+import { formatAccelerator } from './accelerator.js';
 
 /** The chat preload bridge surface Settings needs. */
 export interface SettingsBridge {
@@ -72,8 +73,8 @@ export class Settings {
       <label>Microphone<select data-cfg="inputDeviceId">${deviceOpts('audioinput', cfg.inputDeviceId)}</select></label>
       <label>Speaker<select data-cfg="outputDeviceId">${deviceOpts('audiooutput', cfg.outputDeviceId)}</select></label>
       <label>Claude host<select data-cfg="claudeHost">${hostOpts}</select></label>
-      <label>Push-to-talk hotkey<input data-cfg="hotkey" value="${str('hotkey')}"></label>
-      <label>"Explain selection" hotkey<input data-cfg="explainHotkey" value="${str('explainHotkey')}"></label>
+      <label>Push-to-talk hotkey<input data-cfg="hotkey" data-hotkey readonly value="${str('hotkey')}" placeholder="Click, then press keys"></label>
+      <label>"Explain selection" hotkey<input data-cfg="explainHotkey" data-hotkey readonly value="${str('explainHotkey')}" placeholder="Click, then press keys"></label>
       <label class="check"><input type="checkbox" data-cfg="wakeWordEnabled" ${checked('wakeWordEnabled')}> Always-listening wake word</label>
       <label class="check"><input type="checkbox" data-cfg="screenAwareness" ${checked('screenAwareness')}> Let it see my screen</label>
       <label class="check"><input type="checkbox" data-cfg="memoryEnabled" ${checked('memoryEnabled')}> Remember things about me across sessions</label>
@@ -93,14 +94,35 @@ export class Settings {
   }
 
   private wire(): void {
-    // Text/select/textarea → setConfig on change.
+    // Text/select/textarea → setConfig on change (hotkey fields handled separately).
     this.el.querySelectorAll<HTMLElement>('[data-cfg]').forEach((node) => {
+      if (node.hasAttribute('data-hotkey')) return;
       const key = node.dataset.cfg!;
       const input = node as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement;
       const isCheckbox = input instanceof HTMLInputElement && input.type === 'checkbox';
       input.addEventListener('change', () => {
         const value = isCheckbox ? (input as HTMLInputElement).checked : input.value;
         void this.bridge.setConfig(key, value).then(() => this.status(`Saved ${key}.`));
+      });
+    });
+
+    // Hotkey fields: click to record, then capture the next chord as an accelerator.
+    this.el.querySelectorAll<HTMLInputElement>('input[data-hotkey]').forEach((input) => {
+      const key = input.dataset.cfg!;
+      input.addEventListener('focus', () => {
+        input.dataset['prev'] = input.value;
+        input.value = '';
+      });
+      input.addEventListener('blur', () => {
+        if (!input.value) input.value = input.dataset['prev'] ?? '';
+      });
+      input.addEventListener('keydown', (e) => {
+        e.preventDefault();
+        const accelerator = formatAccelerator(e);
+        if (!accelerator) return; // wait for a non-modifier key
+        input.value = accelerator;
+        input.blur();
+        void this.bridge.setConfig(key, accelerator).then(() => this.status(`Saved ${key}.`));
       });
     });
 
