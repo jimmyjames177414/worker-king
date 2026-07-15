@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from 'node:child_process';
+import { spawn, type ChildProcess, type SpawnOptions } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { EventEmitter } from 'node:events';
@@ -11,29 +11,78 @@ export interface DaemonConnection {
   host: 'windows' | 'wsl' | 'unknown';
 }
 
+export type SpawnFn = (command: string, args: string[], options: SpawnOptions) => ChildProcess;
+
 export interface DaemonSupervisorOptions {
   /** 'windows' spawns node natively; 'wsl' spawns via wsl.exe. */
   mode: 'windows' | 'wsl';
   /** WSL distro name (mode 'wsl' only). */
   wslDistro?: string;
+  /** Max crash-restarts allowed within `restartWindowMs` before giving up. Default 5. */
+  maxRestarts?: number;
+  /** Rolling window over which restarts are counted. Default 60_000ms. */
+  restartWindowMs?: number;
+  /** First backoff delay; doubles each consecutive restart. Default 500ms. */
+  backoffBaseMs?: number;
+  /** Backoff ceiling. Default 30_000ms. */
+  backoffMaxMs?: number;
+  /** Uptime after which a run is "healthy" and the restart counter resets. Default 30_000ms. */
+  healthyUptimeMs?: number;
+  /** Injectable clock (tests). */
+  now?: () => number;
+  /** Injectable delay (tests). */
+  delayFn?: (ms: number) => Promise<void>;
+  /** Injectable spawn (tests). */
+  spawnFn?: SpawnFn;
 }
 
 /**
  * Spawns and supervises the core daemon (@workerking/core). Captures the
  * `WORKERKING_READY {json}` handshake line from stdout to learn the bound port
- * and auth token, then keeps the process alive (restart on crash).
+ * and auth token, then keeps the process alive across crashes.
+ *
+ * Crash handling is bounded: each restart waits an exponential backoff, and if
+ * the daemon crashes more than `maxRestarts` times within `restartWindowMs` the
+ * supervisor gives up and emits `fatal` instead of hot-looping spawns forever. A
+ * run that stays up past `healthyUptimeMs` resets the counter, so an occasional
+ * crash after a long healthy session doesn't count toward the loop budget.
  *
  * Native mode runs `node <coreMain>`. WSL mode runs
  * `wsl.exe -d <distro> -e node <linuxPathToCoreMain>` — the same daemon reached
  * over automatic localhost forwarding, so the rest of the app is identical.
+ *
+ * Events: `ready`, `restarted`, `crash`, `backoff` ({attempt, delayMs}),
+ * `fatal` (Error — gave up), `log`, `error`, `exit`.
  */
 export class DaemonSupervisor extends EventEmitter {
   private child?: ChildProcess;
   private connection?: DaemonConnection;
   private stopping = false;
 
+  private readonly maxRestarts: number;
+  private readonly restartWindowMs: number;
+  private readonly backoffBaseMs: number;
+  private readonly backoffMaxMs: number;
+  private readonly healthyUptimeMs: number;
+  private readonly now: () => number;
+  private readonly delayFn: (ms: number) => Promise<void>;
+  private readonly spawnFn: SpawnFn;
+
+  /** Timestamps of recent crash-restarts, pruned to `restartWindowMs`. */
+  private restartTimestamps: number[] = [];
+  /** When the current run reported READY (undefined until ready / after a crash). */
+  private readyAt?: number;
+
   constructor(private readonly opts: DaemonSupervisorOptions) {
     super();
+    this.maxRestarts = opts.maxRestarts ?? 5;
+    this.restartWindowMs = opts.restartWindowMs ?? 60_000;
+    this.backoffBaseMs = opts.backoffBaseMs ?? 500;
+    this.backoffMaxMs = opts.backoffMaxMs ?? 30_000;
+    this.healthyUptimeMs = opts.healthyUptimeMs ?? 30_000;
+    this.now = opts.now ?? (() => Date.now());
+    this.delayFn = opts.delayFn ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
+    this.spawnFn = opts.spawnFn ?? spawn;
   }
 
   /** Start the daemon and resolve once it reports READY. */
@@ -66,7 +115,7 @@ export class DaemonSupervisor extends EventEmitter {
     }
 
     return new Promise((resolve, reject) => {
-      const child = spawn(command, args, { env, stdio: ['ignore', 'pipe', 'pipe'] });
+      const child = this.spawnFn(command, args, { env, stdio: ['ignore', 'pipe', 'pipe'] });
       this.child = child;
 
       let settled = false;
@@ -82,6 +131,7 @@ export class DaemonSupervisor extends EventEmitter {
             try {
               const info = JSON.parse(line.slice('WORKERKING_READY '.length));
               this.connection = { port: info.port, token: info.token, host: info.host };
+              if (this.readyAt === undefined) this.readyAt = this.now();
               if (!settled) {
                 settled = true;
                 resolve(this.connection);
@@ -104,9 +154,9 @@ export class DaemonSupervisor extends EventEmitter {
           settled = true;
           reject(new Error(`daemon exited before ready (code ${code})`));
         } else if (!this.stopping) {
-          // Crash after ready → attempt one restart.
+          // Crash after ready → bounded restart with backoff + crash-loop guard.
           this.emit('crash', code);
-          this.restart().catch((err) => this.emit('error', err));
+          void this.handleCrash();
         }
       });
 
@@ -121,10 +171,51 @@ export class DaemonSupervisor extends EventEmitter {
     });
   }
 
-  private async restart(): Promise<void> {
-    this.child = undefined;
-    const conn = await this.start();
-    this.emit('restarted', conn);
+  /**
+   * Decide whether to restart after a crash, and do it with backoff. Gives up
+   * (emits `fatal`) once crashes exceed the budget within the rolling window.
+   */
+  private async handleCrash(): Promise<void> {
+    const t = this.now();
+
+    // A run that stayed up past the healthy threshold clears the loop counter —
+    // one crash after a long healthy session shouldn't count toward the budget.
+    if (this.readyAt !== undefined && t - this.readyAt >= this.healthyUptimeMs) {
+      this.restartTimestamps = [];
+    }
+    this.readyAt = undefined;
+
+    // Drop restarts that fell out of the rolling window.
+    this.restartTimestamps = this.restartTimestamps.filter((ts) => t - ts < this.restartWindowMs);
+
+    if (this.restartTimestamps.length >= this.maxRestarts) {
+      const secs = Math.round(this.restartWindowMs / 1000);
+      this.emit(
+        'fatal',
+        new Error(
+          `daemon crashed ${this.restartTimestamps.length + 1} times within ${secs}s; giving up`,
+        ),
+      );
+      return;
+    }
+
+    const attempt = this.restartTimestamps.length; // 0-based → backoff exponent
+    this.restartTimestamps.push(t);
+    const delayMs = Math.min(this.backoffMaxMs, this.backoffBaseMs * 2 ** attempt);
+    this.emit('backoff', { attempt: attempt + 1, delayMs });
+
+    await this.delayFn(delayMs);
+    if (this.stopping) return;
+
+    try {
+      this.child = undefined;
+      const conn = await this.start();
+      this.emit('restarted', conn);
+    } catch (err) {
+      // Restart never reached READY — count it and keep the backoff loop going.
+      this.emit('error', err);
+      void this.handleCrash();
+    }
   }
 
   getConnection(): DaemonConnection | undefined {

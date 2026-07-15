@@ -11,7 +11,7 @@ if (process.env['WORKERKING_APP_LOG']) {
   mkdirSync(dirname(logPath), { recursive: true });
   const logStream = createWriteStream(logPath, { flags: 'a' });
   const origWrite = process.stderr.write.bind(process.stderr);
-  // @ts-expect-error overriding write signature
+  // Tee writes to the log file, then delegate to the original stderr.write.
   process.stderr.write = (chunk: unknown, ...args: unknown[]) => {
     logStream.write(String(chunk));
     return (origWrite as (...a: unknown[]) => boolean)(chunk, ...args);
@@ -126,10 +126,23 @@ async function boot(): Promise<void> {
   supervisor = new DaemonSupervisor({ mode });
   supervisor.on('log', (line: string) => process.stderr.write(`[daemon] ${line}`));
   supervisor.on('crash', (code: number | null) =>
-    process.stderr.write(`[daemon] crashed (code ${code}), restarting\n`),
+    process.stderr.write(`[daemon] crashed (code ${code})\n`),
+  );
+  supervisor.on('backoff', ({ attempt, delayMs }: { attempt: number; delayMs: number }) =>
+    process.stderr.write(`[daemon] restart attempt ${attempt} in ${delayMs}ms\n`),
   );
   supervisor.on('restarted', (conn: DaemonConnection) => {
     connection = conn;
+  });
+  // Crash-loop budget exhausted: stop thrashing and tell the user.
+  supervisor.on('fatal', (err: Error) => {
+    process.stderr.write(`[daemon] fatal: ${err.message}\n`);
+    if (Notification.isSupported()) {
+      new Notification({
+        title: config.get('assistantName') || 'WorkerKing',
+        body: 'The assistant daemon keeps crashing and has stopped. Check the logs.',
+      }).show();
+    }
   });
 
   connection = await supervisor.start();
@@ -187,7 +200,7 @@ async function boot(): Promise<void> {
 
   // Forward renderer console output to main stderr so the log runner captures it.
   for (const [label, win] of [['overlay', overlay], ['chat', chat]] as const) {
-    win.webContents.on('console-message', (_e, level, msg) => {
+    win.webContents.on('console-message', (_e, _level, msg) => {
       process.stderr.write(`[renderer:${label}] ${msg}\n`);
     });
   }
