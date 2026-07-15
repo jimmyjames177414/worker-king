@@ -1,6 +1,7 @@
 import { connectToDaemon, type WsClient } from '../shared/wsClient.js';
 import { Settings, type SettingsBridge } from './Settings.js';
 import { renderMarkdown } from './markdown.js';
+import { decorateAssistantBubble } from './copy.js';
 
 /**
  * Chat renderer entry. Text chat plus a task-list panel (delegated work streamed
@@ -51,9 +52,14 @@ function saveTranscript(msgs: Msg[]): void {
 }
 
 function renderInto(row: HTMLElement, who: 'you' | 'wk', text: string): void {
-  // The user's own text stays literal; assistant replies render Markdown.
-  if (who === 'wk') row.innerHTML = renderMarkdown(text);
-  else row.textContent = text;
+  // The user's own text stays literal; assistant replies render Markdown and get
+  // copy affordances (message + per-code-block).
+  if (who === 'wk') {
+    row.innerHTML = renderMarkdown(text);
+    decorateAssistantBubble(row, text);
+  } else {
+    row.textContent = text;
+  }
 }
 
 function appendBubble(log: HTMLElement, who: 'you' | 'wk'): HTMLElement {
