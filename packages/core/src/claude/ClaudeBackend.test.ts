@@ -106,6 +106,28 @@ describe('ClaudeBackend.respond', () => {
     expect(opts1?.resume).toBe('sess-A');
   });
 
+  it('reads cwd live and resets the session when the project changes (F1)', async () => {
+    let cwd: string | undefined = '/repo/a';
+    const seen: unknown[] = [];
+    const qf = vi
+      .fn<ClaudeQueryFn>()
+      .mockImplementationOnce(fakeQuery([successResult('s1', 'ok')], (p) => seen.push(p)))
+      .mockImplementationOnce(fakeQuery([successResult('s2', 'ok')], (p) => seen.push(p)))
+      .mockImplementationOnce(fakeQuery([successResult('s3', 'ok')], (p) => seen.push(p)));
+    const backend = new ClaudeBackend({ queryFn: qf as ClaudeQueryFn, cwdProvider: () => cwd });
+
+    await backend.respond('one', () => {}); // session s1, cwd a
+    await backend.respond('two', () => {}); // same cwd → resumes s1
+    cwd = '/repo/b';
+    await backend.respond('three', () => {}); // cwd changed → no resume
+
+    const opts = (i: number) => (seen[i] as { options?: { resume?: string; cwd?: string } }).options;
+    expect(opts(1)?.resume).toBe('s1'); // 2nd call resumed within the same project
+    expect(opts(1)?.cwd).toBe('/repo/a');
+    expect(opts(2)?.resume).toBeUndefined(); // 3rd call: project switched → fresh session
+    expect(opts(2)?.cwd).toBe('/repo/b');
+  });
+
   it('applies the persona as a preset+append system prompt', async () => {
     let captured: { options?: { systemPrompt?: unknown } } | undefined;
     const backend = new ClaudeBackend({

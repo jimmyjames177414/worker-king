@@ -1,4 +1,5 @@
 import { writeFileSync } from 'node:fs';
+import { basename } from 'node:path';
 import type { PayloadOf, CapabilityManifest } from '@workerking/shared';
 import { WsServer } from './ws/server.js';
 import { ConfigStore } from './config/ConfigStore.js';
@@ -101,10 +102,36 @@ export interface RunningDaemon {
  * imported (Handlebars-assembled), else the simple name+personality form. Read
  * live per message so settings/card changes apply without a restart.
  */
-export function computePersonaAppend(
-  config: ConfigStore,
-  memory?: Pick<MemoryStore, 'summary'>,
-): string {
+/** Live context sources folded into the assembled system prompt each message. */
+export interface PersonaContext {
+  memory?: Pick<MemoryStore, 'summary'>;
+  /** Current conversation, for the rolling summary of truncated history (N14). */
+  conversations?: Pick<ConversationStore, 'currentSummary'>;
+  /** The active project directory (claudeCwd), for orientation. */
+  cwd?: string;
+  /** Clock, injectable for tests. */
+  now?: () => Date;
+}
+
+/**
+ * Ambient context block fed to the model each message: the current time, the
+ * active project, and the gist of any earlier conversation that scrolled out of
+ * the window. Cheap orientation the model would otherwise spend tool calls (or
+ * simply lack) to obtain — and the consumer that finally uses N14's summary.
+ */
+function buildAmbientContext(ctx: PersonaContext): string {
+  const lines: string[] = [];
+  const now = (ctx.now ?? (() => new Date()))();
+  lines.push(`Current date and time: ${now.toISOString()}.`);
+  if (ctx.cwd) lines.push(`Active project: ${basename(ctx.cwd)} (${ctx.cwd}).`);
+  const summary = ctx.conversations?.currentSummary();
+  if (summary) {
+    lines.push(`Earlier in this conversation (summarized, scrolled out of context): ${summary}`);
+  }
+  return lines.length ? `Ambient context:\n${lines.join('\n')}` : '';
+}
+
+export function computePersonaAppend(config: ConfigStore, ctx: PersonaContext = {}): string {
   let base: string;
   const card = config.get('characterCard');
   if (card) {
@@ -118,12 +145,13 @@ export function computePersonaAppend(
     base = assemblePersonaAppend(config.get());
   }
 
-  // Layer in remembered facts (always in context) + the self-authoring nudge.
+  // Layer: persona → self-authoring nudge → remembered facts → ambient context.
   const parts = [base, SELF_AUTHOR_NUDGE];
-  if (memory && config.get('memoryEnabled') !== false) {
-    const mem = memory.summary();
+  if (ctx.memory && config.get('memoryEnabled') !== false) {
+    const mem = ctx.memory.summary();
     if (mem) parts.push(mem);
   }
+  parts.push(buildAmbientContext(ctx));
   return parts.filter(Boolean).join('\n\n');
 }
 
@@ -140,8 +168,10 @@ async function resolveBrain(
   deps: DaemonDeps,
   proactiveHolder: { manager?: ProactiveManager } = {},
 ): Promise<void> {
-  const { memory, interactionLog, watchStore, reminderStore } = deps;
+  const { memory, interactionLog, watchStore, reminderStore, conversations } = deps;
   const cwd = config.get('claudeCwd') as string | undefined;
+  /** The active project dir, read live so a Settings change applies per message. */
+  const liveCwd = () => config.get('claudeCwd') as string | undefined;
 
   // Proactive channel: reminders + notify tool → proactive.notify broadcast.
   // If no UI client is connected yet (e.g. a reminder that came due while the
@@ -218,8 +248,13 @@ async function resolveBrain(
   const backgroundCanUseTool = createToolPolicy({ mode: () => 'readonly' });
   const claudeOpts = {
     cwd,
-    // Live persona: re-read config (incl. character card) on every message.
-    personaProvider: () => computePersonaAppend(config, memory),
+    // Live working directory: point Claude at the current project without a
+    // restart; ClaudeBackend resets the session when it changes (F1).
+    cwdProvider: liveCwd,
+    // Live persona + ambient context (time, project, conversation summary),
+    // re-read on every message.
+    personaProvider: () =>
+      computePersonaAppend(config, { memory, conversations, cwd: liveCwd() }),
     mcpServers: { workerking: toolServer },
     allowedTools: WORKERKING_TOOL_ALLOWLIST,
     canUseTool,

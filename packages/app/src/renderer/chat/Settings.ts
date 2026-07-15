@@ -91,6 +91,7 @@ export class Settings {
       <label>Microphone<select data-cfg="inputDeviceId">${deviceOpts('audioinput', cfg.inputDeviceId)}</select></label>
       <label>Speaker<select data-cfg="outputDeviceId">${deviceOpts('audiooutput', cfg.outputDeviceId)}</select></label>
       <label>Claude host<select data-cfg="claudeHost">${hostOpts}</select></label>
+      <label>Project folder<input data-cfg="claudeCwd" value="${str('claudeCwd')}" placeholder="path to the repo Claude should work in, e.g. C:\\code\\amethyst"></label>
       <label>Tool permissions<select data-cfg="toolPermissionMode">${permOpts}</select></label>
       <label>Push-to-talk hotkey<input data-cfg="hotkey" data-hotkey readonly value="${str('hotkey')}" placeholder="Click, then press keys"></label>
       <label>"Explain selection" hotkey<input data-cfg="explainHotkey" data-hotkey readonly value="${str('explainHotkey')}" placeholder="Click, then press keys"></label>
