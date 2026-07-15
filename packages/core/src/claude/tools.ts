@@ -4,6 +4,8 @@ import { z } from 'zod';
 import type { ConfigStore } from '../config/ConfigStore.js';
 import type { ScreenContextProvider } from '../screen/ScreenContextProvider.js';
 import type { MemoryStore, MemoryScope } from '../memory/MemoryStore.js';
+import { KeywordMemoryIndex } from '../memory/MemoryIndex.js';
+import type { MemoryEntry } from '../memory/MemoryStore.js';
 
 /**
  * WorkerKing's in-process SDK tools, exposed to Claude via createSdkMcpServer.
@@ -147,6 +149,87 @@ export function buildMemoryTool(deps: WorkerKingToolDeps) {
   );
 }
 
+function memoryDisabledResult() {
+  return {
+    isError: true,
+    content: [{ type: 'text' as const, text: 'Memory is turned off in WorkerKing settings.' }],
+  };
+}
+
+function formatEntries(entries: MemoryEntry[]): string {
+  return entries.map((e) => `- (${e.scope}) ${e.key}: ${e.value}`).join('\n');
+}
+
+/**
+ * The `recall` tool: lets Claude query durable memory mid-task instead of relying
+ * only on the persona summary injected at boot. Ranked keyword search via
+ * KeywordMemoryIndex. Gated by `memoryEnabled`.
+ */
+export function buildRecallTool(deps: WorkerKingToolDeps) {
+  const enabled = () => deps.config.get('memoryEnabled') !== false && !!deps.memory;
+  return tool(
+    'recall',
+    'Search your durable memory of the user for facts/preferences relevant to a query ' +
+      '(e.g. "editor", "timezone", "how they like PRs"). Returns the best matches. Use before ' +
+      'asking the user something you may already know.',
+    {
+      query: z.string().describe('What to look for, e.g. "coffee" or "preferred editor".'),
+      scope: z.enum(['preference', 'fact', 'project']).optional().describe('Optional scope filter.'),
+      limit: z.number().int().positive().max(25).default(5),
+    },
+    async (args) => {
+      deps.audit?.({ tool: 'recall', detail: `query=${args.query}` });
+      if (!enabled()) return memoryDisabledResult();
+      const index = new KeywordMemoryIndex(deps.memory!);
+      const hits = index.search(args.query, { scope: args.scope as MemoryScope | undefined, limit: args.limit });
+      if (!hits.length) {
+        return { content: [{ type: 'text' as const, text: `No memories match "${args.query}".` }] };
+      }
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `Found ${hits.length} matching ${hits.length === 1 ? 'memory' : 'memories'}:\n${formatEntries(hits)}`,
+          },
+        ],
+      };
+    },
+  );
+}
+
+/**
+ * The `list_memories` tool: dump everything currently remembered (optionally by
+ * scope) so Claude can review the full set. Gated by `memoryEnabled`.
+ */
+export function buildListMemoriesTool(deps: WorkerKingToolDeps) {
+  const enabled = () => deps.config.get('memoryEnabled') !== false && !!deps.memory;
+  return tool(
+    'list_memories',
+    'List everything you currently remember about the user, newest first. Optionally filter by ' +
+      'scope. Use when the user asks what you know/remember about them.',
+    {
+      scope: z.enum(['preference', 'fact', 'project']).optional().describe('Optional scope filter.'),
+    },
+    async (args) => {
+      deps.audit?.({ tool: 'list_memories', detail: args.scope ? `scope=${args.scope}` : 'all' });
+      if (!enabled()) return memoryDisabledResult();
+      const index = new KeywordMemoryIndex(deps.memory!);
+      const entries = index.list({ scope: args.scope as MemoryScope | undefined });
+      if (!entries.length) {
+        return { content: [{ type: 'text' as const, text: 'You have no memories stored yet.' }] };
+      }
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `You remember ${entries.length} ${entries.length === 1 ? 'thing' : 'things'}:\n${formatEntries(entries)}`,
+          },
+        ],
+      };
+    },
+  );
+}
+
 /** The `notify` tool: Claude proactively surfaces a heads-up (toast + optional speech). */
 export function buildNotifyTool(deps: WorkerKingToolDeps) {
   return tool(
@@ -203,7 +286,7 @@ export function createWorkerKingToolServer(deps: WorkerKingToolDeps): McpServerC
   const { getActiveWindow, captureScreen } = buildScreenTools(deps);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const tools: Array<SdkMcpToolDefinition<any>> = [getActiveWindow, captureScreen];
-  if (deps.memory) tools.push(buildMemoryTool(deps));
+  if (deps.memory) tools.push(buildMemoryTool(deps), buildRecallTool(deps), buildListMemoriesTool(deps));
   if (deps.proactiveNotify) tools.push(buildNotifyTool(deps));
   if (deps.scheduleReminder) tools.push(buildReminderTool(deps));
   return createSdkMcpServer({
@@ -218,6 +301,8 @@ export const WORKERKING_TOOL_ALLOWLIST = [
   `mcp__${WORKERKING_MCP_SERVER_NAME}__get_active_window`,
   `mcp__${WORKERKING_MCP_SERVER_NAME}__capture_screen`,
   `mcp__${WORKERKING_MCP_SERVER_NAME}__remember`,
+  `mcp__${WORKERKING_MCP_SERVER_NAME}__recall`,
+  `mcp__${WORKERKING_MCP_SERVER_NAME}__list_memories`,
   `mcp__${WORKERKING_MCP_SERVER_NAME}__notify`,
   `mcp__${WORKERKING_MCP_SERVER_NAME}__set_reminder`,
 ];
