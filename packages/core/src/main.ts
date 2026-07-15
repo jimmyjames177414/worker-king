@@ -221,7 +221,8 @@ export async function startDaemon(opts: StartDaemonOptions = {}): Promise<Runnin
   const token = opts.token ?? process.env.WORKERKING_TOKEN ?? newToken();
   const host = detectHost();
 
-  const config = new ConfigStore();
+  // Headless daemon: persist config so a standalone run doesn't reset on restart.
+  const config = new ConfigStore(undefined, { persist: true });
   const server = new WsServer({ token, host, daemonVersion: DAEMON_VERSION });
 
   // Pick the brain without blocking boot: an injected brain or the echo brain is
