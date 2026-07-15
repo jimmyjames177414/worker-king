@@ -22,6 +22,34 @@
       }
       .bubble--you { align-self: flex-end; background: #2a6cff; color: #fff; border-bottom-right-radius: 4px; }
       .bubble--wk { align-self: flex-start; background: rgba(128,128,128,0.18); border-bottom-left-radius: 4px; }
+      /* Markdown inside assistant bubbles */
+      .bubble--wk p { margin: 0 0 6px; } .bubble--wk p:last-child { margin-bottom: 0; }
+      .bubble--wk ul, .bubble--wk ol { margin: 4px 0; padding-left: 20px; }
+      .bubble--wk code { font-family: ui-monospace, monospace; font-size: 0.92em; background: rgba(128,128,128,0.22); padding: 1px 4px; border-radius: 4px; }
+      .bubble--wk pre.code { background: rgba(0,0,0,0.28); padding: 8px 10px; border-radius: 8px; overflow-x: auto; margin: 6px 0; }
+      .bubble--wk pre.code code { background: none; padding: 0; }
+      .bubble--wk a { color: inherit; text-decoration: underline; }
+      /* Header buttons + task count badge */
+      #tasks-toggle { position: relative; }
+      #tasks-count { display: none; }
+      #tasks-count.has { display: inline-block; min-width: 16px; text-align: center; font-size: 11px; font-weight: 700;
+        background: #2a6cff; color: #fff; border-radius: 9px; padding: 0 5px; margin-left: 4px; }
+      /* Tasks panel (slide-over, mirrors settings) */
+      #tasks-panel { display: none; position: absolute; inset: 0; background: Canvas; overflow-y: auto; padding: 14px 16px; z-index: 5; }
+      #tasks-panel.open { display: block; }
+      #tasks-panel h2 { margin: 4px 0 12px; }
+      #tasks-list:empty::after { content: 'No delegated tasks yet.'; opacity: 0.6; font-size: 13px; }
+      .task { border: 1px solid rgba(128,128,128,0.3); border-radius: 10px; padding: 8px 10px; margin-bottom: 8px; }
+      .task__head { display: flex; align-items: center; gap: 8px; }
+      .task__title { font-size: 13px; word-break: break-word; }
+      .task__detail { font-size: 12px; opacity: 0.8; margin-top: 5px; white-space: pre-wrap; word-break: break-word; }
+      .task__badge { font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; font-weight: 700;
+        padding: 2px 6px; border-radius: 6px; background: rgba(128,128,128,0.25); flex: none; }
+      .task--running .task__badge, .task--queued .task__badge { background: #2a6cff; color: #fff; }
+      .task--done .task__badge { background: #17c964; color: #04210f; }
+      .task--error .task__badge { background: #f5544a; color: #fff; }
+      .task--cancelled .task__badge { background: rgba(128,128,128,0.4); }
+      #tasks-close { margin-top: 8px; background: rgba(128,128,128,0.25); color: inherit; }
       #composer { display: flex; gap: 8px; padding: 10px; border-top: 1px solid rgba(128,128,128,0.25); }
       #input { flex: 1; padding: 9px 12px; border-radius: 10px; border: 1px solid rgba(128,128,128,0.4); background: Field; color: FieldText; font: inherit; }
       button { padding: 9px 16px; border: none; border-radius: 10px; background: #2a6cff; color: #fff; font: inherit; cursor: pointer; }
@@ -49,6 +77,7 @@
       <span>WorkerKing</span>
       <span class="row" style="display:flex;gap:10px;align-items:center">
         <span id="status">connecting…</span>
+        <button id="tasks-toggle" title="Tasks">📋<span id="tasks-count"></span></button>
         <button id="gear" title="Settings">⚙</button>
       </span>
     </header>
@@ -57,6 +86,11 @@
       <input id="input" type="text" placeholder="Ask WorkerKing…" autocomplete="off" autofocus />
       <button type="submit">Send</button>
     </form>
+    <section id="tasks-panel">
+      <h2>Tasks</h2>
+      <div id="tasks-list"></div>
+      <button id="tasks-close">Close</button>
+    </section>
     <section id="settings">
       <div id="settings-body"></div>
       <button id="settings-close">Close</button>
