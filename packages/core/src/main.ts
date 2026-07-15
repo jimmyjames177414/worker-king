@@ -19,6 +19,7 @@ import { NightlyJob, createClaudeDistiller } from './memory/NightlyJob.js';
 import { ReminderStore } from './proactive/ReminderStore.js';
 import { ReminderScheduler } from './proactive/ReminderScheduler.js';
 import { ProactiveManager, defaultWatches } from './proactive/ProactiveManager.js';
+import { WatchStore } from './proactive/WatchStore.js';
 import { detectHost } from './util/host.js';
 import { daemonEnvelopeContext, newToken } from './util/ids.js';
 import { installFileLog } from './util/fileLog.js';
@@ -30,6 +31,7 @@ const log = createLogger({ scope: 'workerking' });
 const memory = new MemoryStore();
 const interactionLog = new InteractionLog();
 const conversations = new ConversationStore();
+const watchStore = new WatchStore();
 const reminderStore = new ReminderStore();
 
 /** The Voyager-pattern nudge: encourage Claude to grow its own skills. */
@@ -106,6 +108,7 @@ async function resolveBrain(
   server: WsServer,
   mode: 'auto' | 'claude',
   registerDisposable: (d: Disposable) => void,
+  proactiveHolder: { manager?: ProactiveManager } = {},
 ): Promise<void> {
   const cwd = config.get('claudeCwd') as string | undefined;
 
@@ -209,9 +212,10 @@ async function resolveBrain(
       const manager = new ProactiveManager({
         respond: (prompt) => createClaudeBackend({ cwd }).respond(prompt, () => {}),
         notify: proactiveNotify,
-        watches: defaultWatches(),
+        watches: [...defaultWatches(), ...watchStore.list()],
       });
       manager.start();
+      proactiveHolder.manager = manager; // let the supervisor live-reload it
       registerDisposable({ stop: () => manager.stop() });
     }
   };
@@ -258,6 +262,9 @@ export async function startDaemon(opts: StartDaemonOptions = {}): Promise<Runnin
   // disposables (capability manager / nightly job / proactive) to exist first.
   let brainReady: Promise<void> = Promise.resolve();
   let brain: Brain;
+  // Holds the running ProactiveManager (set once the real brain resolves) so the
+  // supervisor can live-reload watches when the user adds/removes them.
+  const proactiveHolder: { manager?: ProactiveManager } = {};
   if (opts.brain) {
     brain = opts.brain;
   } else if (mode === 'echo') {
@@ -265,11 +272,19 @@ export async function startDaemon(opts: StartDaemonOptions = {}): Promise<Runnin
   } else {
     const deferred = new DeferredBrain();
     brain = deferred;
-    brainReady = resolveBrain(deferred, config, server, mode, (d) => disposables.push(d)).catch(
-      () => {},
-    );
+    brainReady = resolveBrain(
+      deferred,
+      config,
+      server,
+      mode,
+      (d) => disposables.push(d),
+      proactiveHolder,
+    ).catch(() => {});
   }
-  new Supervisor(server, config, brain, interactionLog, conversations);
+  new Supervisor(server, config, brain, interactionLog, conversations, {
+    store: watchStore,
+    reload: (watches) => proactiveHolder.manager?.reload(watches),
+  });
 
   const requestedPort =
     opts.port ?? (process.env.WORKERKING_PORT ? Number(process.env.WORKERKING_PORT) : 0);

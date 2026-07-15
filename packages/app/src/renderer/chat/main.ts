@@ -315,6 +315,56 @@ async function main(): Promise<void> {
     historyPanel?.classList.remove('open');
   });
 
+  // --- Proactive watches ---------------------------------------------------
+  const watchesPanel = document.getElementById('watches-panel');
+  const watchesList = document.getElementById('watches-list');
+  document.getElementById('watches-toggle')?.addEventListener('click', () => {
+    watchesPanel?.classList.toggle('open');
+    if (watchesPanel?.classList.contains('open')) client.send('watches.list', {});
+  });
+  document.getElementById('watches-close')?.addEventListener('click', () => watchesPanel?.classList.remove('open'));
+  document.getElementById('watch-form')?.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const prompt = (document.getElementById('watch-prompt') as HTMLInputElement).value.trim();
+    const cron = (document.getElementById('watch-cron') as HTMLInputElement).value.trim();
+    if (!prompt || !cron) return;
+    client.send('watches.add', { prompt, cron });
+    (document.getElementById('watch-prompt') as HTMLInputElement).value = '';
+  });
+
+  client.on('watches.list_result', (env) => {
+    if (!watchesList) return;
+    watchesList.replaceChildren();
+    for (const w of env.payload.watches) {
+      const row = document.createElement('div');
+      row.className = 'watch';
+      const head = document.createElement('div');
+      head.className = 'watch__head';
+      const cron = document.createElement('span');
+      cron.className = 'watch__cron';
+      cron.textContent = w.cron;
+      head.appendChild(cron);
+      if (w.builtin) {
+        const badge = document.createElement('span');
+        badge.className = 'watch__badge';
+        badge.textContent = 'built-in';
+        head.appendChild(badge);
+      } else {
+        const rm = document.createElement('button');
+        rm.type = 'button';
+        rm.className = 'watch__remove';
+        rm.textContent = 'Remove';
+        rm.addEventListener('click', () => client.send('watches.remove', { id: w.id }));
+        head.appendChild(rm);
+      }
+      const prompt = document.createElement('div');
+      prompt.className = 'watch__prompt';
+      prompt.textContent = w.prompt;
+      row.append(head, prompt);
+      watchesList.appendChild(row);
+    }
+  });
+
   client.on('error', (env) => {
     status.textContent = `error: ${env.payload.message}`;
   });

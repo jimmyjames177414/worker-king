@@ -1,5 +1,8 @@
 import { Cron } from 'croner';
+import type { Watch } from '@workerking/shared';
 import type { ProactiveNotice } from '../claude/tools.js';
+
+export type { Watch };
 
 /**
  * ProactiveManager — scheduled "watches" that let WorkerKing speak up unprompted.
@@ -13,13 +16,6 @@ import type { ProactiveNotice } from '../claude/tools.js';
  * `respond` and the cron factory are injected so the logic is testable without a
  * real schedule or Claude.
  */
-export interface Watch {
-  id: string;
-  prompt: string;
-  /** 5-field cron expression (min interval: hourly enforced by scheduler libs). */
-  cron: string;
-}
-
 export interface ProactiveManagerDeps {
   respond: (prompt: string) => Promise<string>;
   notify: (notice: ProactiveNotice) => void;
@@ -34,6 +30,7 @@ export function defaultWatches(): Watch[] {
   return [
     {
       id: 'calendar-heads-up',
+      builtin: true,
       // Every 5 minutes; Claude decides whether anything is worth a heads-up.
       cron: '*/5 * * * *',
       prompt:
@@ -59,15 +56,30 @@ export async function runWatch(
 
 export class ProactiveManager {
   private crons: Array<{ stop: () => void }> = [];
+  private watches: Watch[];
+  private running = false;
   private readonly makeCron: (expr: string, cb: () => void) => { stop: () => void };
 
   constructor(private readonly deps: ProactiveManagerDeps) {
+    this.watches = deps.watches;
     this.makeCron =
       deps.makeCron ?? ((expr, cb) => new Cron(expr, () => cb()) as unknown as { stop: () => void });
   }
 
   start(): void {
-    for (const watch of this.deps.watches) {
+    this.running = true;
+    for (const watch of this.watches) {
+      this.crons.push(this.makeCron(watch.cron, () => void this.tick(watch)));
+    }
+  }
+
+  /** Replace the scheduled watches at runtime (add/remove), rescheduling if running. */
+  reload(watches: Watch[]): void {
+    this.watches = watches;
+    if (!this.running) return;
+    for (const c of this.crons) c.stop();
+    this.crons = [];
+    for (const watch of this.watches) {
       this.crons.push(this.makeCron(watch.cron, () => void this.tick(watch)));
     }
   }
@@ -82,6 +94,7 @@ export class ProactiveManager {
   }
 
   stop(): void {
+    this.running = false;
     for (const c of this.crons) c.stop();
     this.crons = [];
   }

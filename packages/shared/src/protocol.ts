@@ -6,6 +6,7 @@ import {
   avatarStateSchema,
   conversationMessageSchema,
   conversationSummarySchema,
+  watchSchema,
 } from './domain.js';
 
 /**
@@ -127,6 +128,12 @@ const historyLoadResultPayload = z.object({
 });
 const historyNewPayload = z.object({});
 const historyNewResultPayload = z.object({ conversationId: z.string() });
+
+// Proactive watches management (renderer request -> daemon result).
+const watchesListPayload = z.object({});
+const watchesListResultPayload = z.object({ watches: z.array(watchSchema) });
+const watchesAddPayload = z.object({ prompt: z.string(), cron: z.string() });
+const watchesRemovePayload = z.object({ id: z.string() });
 const taskProgressPayload = z.object({
   taskId: z.string(),
   progress: taskProgressSchema,
@@ -212,6 +219,11 @@ export const payloadSchemas = {
   'history.load_result': historyLoadResultPayload,
   'history.new': historyNewPayload,
   'history.new_result': historyNewResultPayload,
+
+  'watches.list': watchesListPayload,
+  'watches.list_result': watchesListResultPayload,
+  'watches.add': watchesAddPayload,
+  'watches.remove': watchesRemovePayload,
 
   'config.get': configGetPayload,
   'config.set': configSetPayload,
