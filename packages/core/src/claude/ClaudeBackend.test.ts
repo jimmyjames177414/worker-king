@@ -3,7 +3,9 @@ import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import {
   ClaudeBackend,
   ClaudeAuthError,
+  ClaudeRateLimitError,
   extractTextDelta,
+  extractUsage,
   type ClaudeQueryFn,
 } from './ClaudeBackend.js';
 
@@ -137,5 +139,54 @@ describe('ClaudeBackend.respond', () => {
       ]),
     });
     await expect(backend.respond('hi', () => {})).rejects.toThrow(/error_max_turns/);
+  });
+
+  it('maps a 429 to ClaudeRateLimitError, parsing retry-after', async () => {
+    const backend = new ClaudeBackend({
+      queryFn: () =>
+        (async function* (): AsyncGenerator<SDKMessage> {
+          throw new Error('HTTP 429 too many requests; retry-after: 30');
+        })(),
+    });
+    const err = await backend.respond('hi', () => {}).catch((e) => e);
+    expect(err).toBeInstanceOf(ClaudeRateLimitError);
+    expect((err as ClaudeRateLimitError).retryAfterSec).toBe(30);
+  });
+
+  it('maps an error_usage_limit subtype to ClaudeRateLimitError', async () => {
+    const backend = new ClaudeBackend({
+      queryFn: fakeQuery([
+        { type: 'result', subtype: 'error_usage_limit', session_id: 's' } as unknown as SDKMessage,
+      ]),
+    });
+    await expect(backend.respond('hi', () => {})).rejects.toBeInstanceOf(ClaudeRateLimitError);
+  });
+
+  it('captures usage from the result message', async () => {
+    const backend = new ClaudeBackend({
+      queryFn: fakeQuery([
+        {
+          type: 'result',
+          subtype: 'success',
+          session_id: 's',
+          result: 'ok',
+          usage: { input_tokens: 12, output_tokens: 34 },
+          total_cost_usd: 0.001,
+        } as unknown as SDKMessage,
+      ]),
+    });
+    await backend.respond('hi', () => {});
+    expect(backend.getLastUsage()).toEqual({
+      inputTokens: 12,
+      outputTokens: 34,
+      totalCostUsd: 0.001,
+    });
+  });
+});
+
+describe('extractUsage', () => {
+  it('returns undefined when no usage fields are present', () => {
+    expect(extractUsage({ type: 'result' })).toBeUndefined();
+    expect(extractUsage(null)).toBeUndefined();
   });
 });

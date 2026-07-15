@@ -209,3 +209,115 @@ export const conversationSummarySchema = z.object({
   messageCount: z.number(),
 });
 export type ConversationSummary = z.infer<typeof conversationSummarySchema>;
+
+// ---------------------------------------------------------------------------
+// Configuration — the single source of truth for user-editable settings.
+//
+// Every process shares this one schema. Electron main owns the persisted
+// electron-store file and proxies it to the daemon over WS; the daemon's
+// ConfigStore validates against the same schema. Add a field here once and it
+// propagates to both sides — no more hand-maintained parallel interfaces.
+// ---------------------------------------------------------------------------
+
+/**
+ * How the Claude Code toolset (Bash/Write/Edit, etc.) is permitted to run.
+ * - `gated`  — destructive tools require an explicit confirmation (fail-closed).
+ * - `auto`   — the SDK default (no WorkerKing-side gate).
+ * - `readonly` — deny mutating tools outright (used when acting on untrusted
+ *   screen-derived input, and selectable by cautious users).
+ */
+export const toolPermissionModeSchema = z.enum(['gated', 'auto', 'readonly']);
+export type ToolPermissionMode = z.infer<typeof toolPermissionModeSchema>;
+
+export const workerKingConfigSchema = z
+  .object({
+    assistantName: z.string(),
+    personality: z.string(),
+    /** UI theme preference. */
+    theme: z.enum(['system', 'light', 'dark']),
+    /** Active voice provider id. */
+    voiceProvider: z.enum(['gpt-realtime', 'local-cascade']),
+    /** OpenAI Realtime model for the voice layer. */
+    openaiModel: z.string(),
+    /** Where the Claude backend runs. 'auto' probes Windows then WSL. */
+    claudeHost: z.enum(['auto', 'windows', 'wsl']),
+    /** Working directory for the Claude Agent SDK session. */
+    claudeCwd: z.string().optional(),
+    /** Push-to-talk global shortcut accelerator. */
+    hotkey: z.string(),
+    /** Always-listening wake word ("Hey <name>"); off by default (hotkey-first). */
+    wakeWordEnabled: z.boolean(),
+    /** Allow Claude to read the foreground window / screenshots; off by default. */
+    screenAwareness: z.boolean(),
+    /** Persist durable facts/preferences across sessions; on by default. */
+    memoryEnabled: z.boolean(),
+    /** Use local-embedding semantic recall (falls back to keyword); off by default. */
+    semanticMemory: z.boolean(),
+    /** Allow scheduled reminders; on by default. */
+    remindersEnabled: z.boolean(),
+    /** Run scheduled proactive "watch" checks (spends Claude quota); off by default. */
+    proactiveEnabled: z.boolean(),
+    /** Global hotkey to explain/act on the current clipboard selection. */
+    explainHotkey: z.string(),
+    /** How the Claude Code toolset is gated; 'gated' by default (fail-closed). */
+    toolPermissionMode: toolPermissionModeSchema.optional(),
+    /** Preferred microphone deviceId (empty/undefined = system default). */
+    inputDeviceId: z.string().optional(),
+    /** Preferred audio-output deviceId (empty/undefined = system default). */
+    outputDeviceId: z.string().optional(),
+    /** The user's display name, for {{user}} in character cards. */
+    userName: z.string().optional(),
+    /** Active SillyTavern chara_card_v2 (object), if the user imported one. */
+    characterCard: z.unknown().optional(),
+  })
+  // Unknown keys are preserved (the store historically allowed arbitrary keys).
+  .passthrough();
+
+/**
+ * Inferred config type. The index signature is kept so `ConfigStore.get(key)` /
+ * `.set(key, value)` can still address arbitrary keys, matching prior behavior.
+ */
+export type WorkerKingConfig = z.infer<typeof workerKingConfigSchema> & {
+  [key: string]: unknown;
+};
+
+/** Baseline defaults applied before any persisted/overriding values. */
+export const DEFAULT_CONFIG: WorkerKingConfig = {
+  assistantName: 'WorkerKing',
+  theme: 'system',
+  personality:
+    'A capable, upbeat desktop companion. Concise out loud, thorough when it matters. ' +
+    'Delegates real work to Claude Code and narrates progress plainly.',
+  voiceProvider: 'gpt-realtime',
+  openaiModel: 'gpt-realtime-mini',
+  claudeHost: 'auto',
+  hotkey: 'Control+Shift+Space',
+  wakeWordEnabled: false,
+  screenAwareness: false,
+  memoryEnabled: true,
+  semanticMemory: false,
+  remindersEnabled: true,
+  proactiveEnabled: false,
+  explainHotkey: 'Control+Shift+E',
+  toolPermissionMode: 'gated',
+};
+
+/**
+ * The known config keys the app pushes to the daemon (secrets are excluded —
+ * they live in safeStorage, never in config). Derived from the schema so it can
+ * never drift from the field set. `undefined` values are skipped by the pusher.
+ */
+export const CONFIG_KEYS = Object.keys(workerKingConfigSchema.shape) as Array<
+  keyof WorkerKingConfig
+>;
+
+/**
+ * Validate a loaded/partial config blob against the schema, dropping keys with
+ * the wrong type rather than trusting the file wholesale ("config is code
+ * execution" — never load a config you didn't validate). Returns the subset of
+ * recognized, well-typed values; unknown keys pass through.
+ */
+export function parseConfig(input: unknown): Partial<WorkerKingConfig> {
+  const result = workerKingConfigSchema.partial().passthrough().safeParse(input);
+  return result.success ? (result.data as Partial<WorkerKingConfig>) : {};
+}
