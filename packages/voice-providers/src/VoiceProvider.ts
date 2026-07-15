@@ -28,6 +28,11 @@ export interface VoiceTurnDelegate {
   onUserTranscript(text: string, final: boolean): void;
   onAssistantTranscript(text: string, final: boolean): void;
   onStateChange(state: VoiceProviderState): void;
+  /**
+   * The user started speaking over the assistant (barge-in). Distinct from a
+   * post-speech return to 'listening', so the host can cancel an in-flight reply.
+   */
+  onSpeechStart?(): void;
   /** Normalized output-audio amplitude (0..1) for the audio-reactive avatar. */
   onAudioLevel?(level: number): void;
   onError(err: Error): void;
