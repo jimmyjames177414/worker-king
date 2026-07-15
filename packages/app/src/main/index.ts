@@ -40,6 +40,7 @@ import { captureScreen } from './ScreenCapture.js';
 interface AppConfig {
   assistantName: string;
   personality: string;
+  theme: 'system' | 'light' | 'dark';
   voiceProvider: 'gpt-realtime' | 'local-cascade';
   openaiModel: string;
   hotkey: string;
@@ -62,6 +63,7 @@ const config = new Store<AppConfig>({
   name: 'config',
   defaults: {
     assistantName: 'WorkerKing',
+    theme: 'system',
     personality:
       'A capable, upbeat desktop companion. Concise out loud, thorough when it matters.',
     voiceProvider: 'gpt-realtime',
@@ -81,6 +83,7 @@ const config = new Store<AppConfig>({
 /** Keys that must never be pushed as plaintext (secrets live in safeStorage). */
 const CONFIG_KEYS: Array<keyof AppConfig> = [
   'assistantName',
+  'theme',
   'personality',
   'voiceProvider',
   'openaiModel',

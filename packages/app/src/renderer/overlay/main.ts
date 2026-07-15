@@ -4,6 +4,7 @@ import { Captions } from './Captions.js';
 import { VoiceHost } from './VoiceHost.js';
 import { WakeWordController, createWakeWordDetector } from './WakeWord.js';
 import { applyOutputDeviceToDom } from '../shared/audioDevices.js';
+import { applyTheme, normalizeThemePref } from '../shared/theme.js';
 
 /**
  * Overlay renderer entry. Wires:
@@ -122,9 +123,11 @@ async function main(): Promise<VoiceHost | undefined> {
       outputDeviceId = asStr(env.payload.value);
       void applyOutputDeviceToDom(outputDeviceId, document);
     }
+    if (env.payload.key === 'theme') applyTheme(normalizeThemePref(env.payload.value));
   });
   client.send('config.get', { key: 'inputDeviceId' });
   client.send('config.get', { key: 'outputDeviceId' });
+  client.send('config.get', { key: 'theme' });
   client.send('config.get', { key: 'wakeWordEnabled' });
 
   // Proactive notices (reminders, watch heads-ups, notify tool): show a caption

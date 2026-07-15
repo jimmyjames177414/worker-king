@@ -63,9 +63,17 @@ export class Settings {
     const hostOpts = ['auto', 'windows', 'wsl']
       .map((h) => `<option value="${h}" ${cfg.claudeHost === h ? 'selected' : ''}>${h}</option>`)
       .join('');
+    const themeOpts = [
+      ['system', 'System'],
+      ['light', 'Light'],
+      ['dark', 'Dark'],
+    ]
+      .map(([v, label]) => `<option value="${v}" ${cfg.theme === v ? 'selected' : ''}>${label}</option>`)
+      .join('');
     return `
       <h2>Settings</h2>
       <label>Assistant name<input data-cfg="assistantName" value="${str('assistantName')}"></label>
+      <label>Theme<select data-cfg="theme">${themeOpts}</select></label>
       <label>Your name<input data-cfg="userName" value="${str('userName')}" placeholder="how it addresses you"></label>
       <label>Personality<textarea data-cfg="personality" rows="3">${str('personality')}</textarea></label>
       <label>Voice engine<select data-cfg="voiceProvider">${providerOpts}</select></label>

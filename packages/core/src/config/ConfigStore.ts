@@ -17,6 +17,8 @@ import { join } from 'node:path';
 export interface WorkerKingConfig {
   assistantName: string;
   personality: string;
+  /** UI theme preference. */
+  theme: 'system' | 'light' | 'dark';
   /** Active voice provider id. */
   voiceProvider: 'gpt-realtime' | 'local-cascade';
   /** OpenAI Realtime model for the voice layer. */
@@ -54,6 +56,7 @@ export interface WorkerKingConfig {
 
 export const DEFAULT_CONFIG: WorkerKingConfig = {
   assistantName: 'WorkerKing',
+  theme: 'system',
   personality:
     'A capable, upbeat desktop companion. Concise out loud, thorough when it matters. ' +
     'Delegates real work to Claude Code and narrates progress plainly.',

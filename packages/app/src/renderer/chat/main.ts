@@ -2,6 +2,7 @@ import { connectToDaemon, type WsClient } from '../shared/wsClient.js';
 import { Settings, type SettingsBridge } from './Settings.js';
 import { renderMarkdown } from './markdown.js';
 import { decorateAssistantBubble } from './copy.js';
+import { applyTheme, normalizeThemePref } from '../shared/theme.js';
 
 /**
  * Chat renderer entry. Text chat plus a task-list panel (delegated work streamed
@@ -189,6 +190,12 @@ async function main(): Promise<void> {
   ).workerking;
   bridge.onReconnect(() => client.reconnect());
   wirePanels();
+
+  // Theme: apply the persisted preference now, and live-update when it changes.
+  void bridge.getConfig().then((cfg) => applyTheme(normalizeThemePref(cfg['theme'])));
+  client.on('config.changed', (env) => {
+    if (env.payload.key === 'theme') applyTheme(normalizeThemePref(env.payload.value));
+  });
 
   // Track the in-flight assistant bubble by messageId.
   const bubbles = new Map<string, HTMLElement>();
