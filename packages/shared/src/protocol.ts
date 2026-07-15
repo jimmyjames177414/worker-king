@@ -111,6 +111,7 @@ const proactiveNotifyPayload = z.object({
 });
 
 const taskCreatedPayload = z.object({ task: taskSchema });
+const taskUpdatedPayload = z.object({ task: taskSchema });
 const taskProgressPayload = z.object({
   taskId: z.string(),
   progress: taskProgressSchema,
@@ -180,6 +181,7 @@ export const payloadSchemas = {
   'proactive.notify': proactiveNotifyPayload,
 
   'task.created': taskCreatedPayload,
+  'task.updated': taskUpdatedPayload,
   'task.progress': taskProgressPayload,
   'task.done': taskDonePayload,
   'task.error': taskErrorPayload,

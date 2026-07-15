@@ -30,6 +30,7 @@ export class Supervisor {
       runner: brain,
       emit: {
         created: (task) => server.broadcast('task.created', { task }),
+        updated: (task) => server.broadcast('task.updated', { task }),
         progress: (taskId, progress) => server.broadcast('task.progress', { taskId, progress }),
         done: (task) => {
           server.broadcast('task.done', { task });

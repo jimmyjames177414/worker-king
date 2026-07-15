@@ -229,6 +229,10 @@ async function main(): Promise<void> {
     const t = env.payload.task;
     taskList.upsert({ id: t.id, prompt: t.prompt, state: t.state });
   });
+  client.on('task.updated', (env) => {
+    const t = env.payload.task;
+    taskList.upsert({ id: t.id, prompt: t.prompt, state: t.state });
+  });
   client.on('task.progress', (env) => {
     taskList.progress(env.payload.taskId, env.payload.progress.text);
   });
