@@ -330,3 +330,31 @@ Same gate as Round 1 (`/verify`: build → typecheck → `test:headless`), plus 
 - **N7/N8/N9:** with `WORKERKING_LOG_JSON=1`, assert one structured line per turn carrying the
   correlation id and the stage timestamps/usage.
 - **N10:** `pnpm eval` runs the golden/LLM-judge suite green (kept out of the CI headless gate).
+
+---
+
+# Implementation status (applied this session)
+
+Landed on `claude/app-refactoring-assessment-s2x2ph`, each committed separately, with the full gate
+(build → typecheck → `test:headless` → lint) green after every group.
+
+**Done**
+- **1a** config → one `workerKingConfigSchema`/`DEFAULT_CONFIG`/`CONFIG_KEYS` in `shared`, consumed by
+  core `ConfigStore` and the app; validate-on-load. Fixed the `claudeCwd`/personality drift.
+- **1b** shared `ClaudeBackend.consume()` iterator behind `respond()`/`run()`.
+- **1c** shared `textResult`/`errorResult`/`memoryOn`/`resolveMemoryIndex` tool helpers.
+- **1d** single `composeWatches(store)`.
+- **N1** `toolPolicy` (`auto`/`readonly`/`gated`, default gated) + `canUseTool` in ClaudeBackend +
+  `WsToolConfirmer` round-trip + `tool.confirm_request/response` protocol + chat-window prompt;
+  background brains forced read-only.
+- **N4** `sanitizeForSpeech` applied at both providers' speak seam.
+- **N2/N3/N7** per-turn epoch + `onSpeechStart` barge-in, `SentenceChunker` streamed TTS, turn-latency log.
+- **N5** `<untrusted-external-data>` framing on screen/window/memory tool output.
+- **N6** `ClaudeRateLimitError` classification (+ retry-after).
+- **N8/N9** correlated per-turn `chat.start/done/error` logs with latency + SDK usage capture.
+- **N11** `setWindowOpenHandler`/`will-navigate` deny on both windows; 16 MiB WS payload cap;
+  config validate-on-load (via 1a).
+
+**Deferred (bigger / need UI or a runner):** Stage 2 god-file decomposition (2a/2b), N10 eval harness,
+N12 durable/resumable tasks, N13 semantic turn detection, N14 conversation summarization, N15
+screenshot redaction, and a Settings control to switch `toolPermissionMode` from the app UI.
