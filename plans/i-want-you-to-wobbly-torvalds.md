@@ -358,10 +358,13 @@ Landed on `claude/app-refactoring-assessment-s2x2ph`, each committed separately,
   `computePersonaAppend(config, memory?)`; importing `main.ts` is now side-effect-free.
 - **N10** opt-in `pnpm eval` harness (routing/speech/persona goldens + optional Claude LLM tier),
   outside the CI gate.
+- **Settings** a "Tool permissions" dropdown (gated/auto/readonly) in the chat Settings panel makes N1
+  user-adjustable from the app.
+- **2b** extracted the global-shortcut state/logic out of the Electron `index.ts` god file into an
+  injectable, unit-tested `HotkeyManager`.
 
-**Deferred (bigger / need UI or a runner):** 2b (app `index.ts` split), N12 durable/resumable tasks,
-N13 semantic turn detection, N14 conversation summarization, N15 screenshot redaction, and a Settings
-control to switch `toolPermissionMode` from the app UI.
+**Deferred (bigger / need a runner or deeper work):** N12 durable/resumable tasks, N13 semantic turn
+detection, N14 conversation summarization, N15 screenshot redaction.
 
 ---
 
