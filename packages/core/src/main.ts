@@ -18,7 +18,7 @@ import { ConversationStore } from './history/ConversationStore.js';
 import { NightlyJob, createClaudeDistiller } from './memory/NightlyJob.js';
 import { ReminderStore } from './proactive/ReminderStore.js';
 import { ReminderScheduler } from './proactive/ReminderScheduler.js';
-import { ProactiveManager, defaultWatches } from './proactive/ProactiveManager.js';
+import { ProactiveManager, composeWatches } from './proactive/ProactiveManager.js';
 import { WatchStore } from './proactive/WatchStore.js';
 import { detectHost } from './util/host.js';
 import { daemonEnvelopeContext, newToken } from './util/ids.js';
@@ -212,7 +212,7 @@ async function resolveBrain(
       const manager = new ProactiveManager({
         respond: (prompt) => createClaudeBackend({ cwd }).respond(prompt, () => {}),
         notify: proactiveNotify,
-        watches: [...defaultWatches(), ...watchStore.list()],
+        watches: composeWatches(watchStore),
       });
       manager.start();
       proactiveHolder.manager = manager; // let the supervisor live-reload it

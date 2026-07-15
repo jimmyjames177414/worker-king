@@ -7,7 +7,7 @@ import { daemonEnvelopeContext } from '../util/ids.js';
 import type { InteractionLog } from '../memory/InteractionLog.js';
 import type { ConversationStore } from '../history/ConversationStore.js';
 import type { WatchStore } from '../proactive/WatchStore.js';
-import { defaultWatches } from '../proactive/ProactiveManager.js';
+import { composeWatches } from '../proactive/ProactiveManager.js';
 import type { Watch } from '@workerking/shared';
 
 /** How the Supervisor manages proactive watches (persist + live reload). */
@@ -191,7 +191,7 @@ export class Supervisor {
 
   /** All watches = built-ins + user-defined. */
   private allWatches(): Watch[] {
-    return [...defaultWatches(), ...(this.watches?.store.list() ?? [])];
+    return composeWatches(this.watches?.store);
   }
 
   private sendWatches(client: WsClient): void {

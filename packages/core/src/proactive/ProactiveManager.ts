@@ -25,6 +25,11 @@ export interface ProactiveManagerDeps {
 
 const NONE = 'NONE';
 
+/** The full watch set = built-in watches + the user's stored ones. */
+export function composeWatches(store?: { list(): Watch[] }): Watch[] {
+  return [...defaultWatches(), ...(store?.list() ?? [])];
+}
+
 /** The default watches shipped with WorkerKing. */
 export function defaultWatches(): Watch[] {
   return [
