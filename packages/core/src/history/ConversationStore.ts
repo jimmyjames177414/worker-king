@@ -20,9 +20,20 @@ export interface Conversation {
   createdAt: number;
   updatedAt: number;
   messages: ConversationMessage[];
+  /**
+   * Rolling gist of messages that fell out of the retained window (N14) — so
+   * truncation doesn't silently lose the earlier context from the durable record.
+   */
+  summary?: string;
   /** SDK session id, so a resumed conversation can reattach its Claude session. */
   sdkSessionId?: string;
 }
+
+/** Summarizes messages evicted by truncation into the rolling conversation summary. */
+export type ConversationSummarizer = (args: {
+  dropped: ConversationMessage[];
+  previous?: string;
+}) => string;
 
 export interface ConversationStoreOptions {
   dir?: string;
@@ -32,6 +43,25 @@ export interface ConversationStoreOptions {
   maxConversations?: number;
   /** Cap on messages kept per conversation. Default 500. */
   maxMessagesPerConversation?: number;
+  /** How dropped messages are folded into the rolling summary (default: compact roll-up). */
+  summarize?: ConversationSummarizer;
+}
+
+/** Deterministic default: a bounded, readable roll-up of the dropped turns. */
+export function defaultConversationSummarizer({
+  dropped,
+  previous,
+}: {
+  dropped: ConversationMessage[];
+  previous?: string;
+}): string {
+  const parts = dropped.map(
+    (m) => `${m.role}: ${m.text.replace(/\s+/g, ' ').trim().slice(0, 80)}`,
+  );
+  const combined = [previous, ...parts].filter(Boolean).join(' | ');
+  // Keep the rolling summary bounded so it can't grow without limit either.
+  const MAX = 1200;
+  return combined.length > MAX ? `…${combined.slice(combined.length - MAX)}` : combined;
 }
 
 interface Persisted {
@@ -47,6 +77,7 @@ export class ConversationStore {
   private readonly newId: () => string;
   private readonly maxConversations: number;
   private readonly maxMessages: number;
+  private readonly summarize: ConversationSummarizer;
   private data: Persisted = { conversations: [] };
 
   constructor(opts: ConversationStoreOptions = {}) {
@@ -56,6 +87,7 @@ export class ConversationStore {
     this.newId = opts.newId ?? (() => `conv-${Math.floor(this.now())}-${this.data.conversations.length}`);
     this.maxConversations = Math.max(1, opts.maxConversations ?? 100);
     this.maxMessages = Math.max(1, opts.maxMessagesPerConversation ?? 500);
+    this.summarize = opts.summarize ?? defaultConversationSummarizer;
     this.hydrate();
   }
 
@@ -106,7 +138,10 @@ export class ConversationStore {
     const conv = this.current();
     conv.messages.push({ role, text, ts: this.now() });
     if (conv.messages.length > this.maxMessages) {
-      conv.messages.splice(0, conv.messages.length - this.maxMessages);
+      // Fold the evicted turns into the rolling summary before dropping them,
+      // so the durable record doesn't silently forget earlier context (N14).
+      const dropped = conv.messages.splice(0, conv.messages.length - this.maxMessages);
+      conv.summary = this.summarize({ dropped, previous: conv.summary });
     }
     if (conv.title === 'New chat' && role === 'user') {
       conv.title = text.slice(0, TITLE_MAX) + (text.length > TITLE_MAX ? '…' : '');
@@ -150,6 +185,11 @@ export class ConversationStore {
   /** Full messages for one conversation. */
   load(id: string): ConversationMessage[] | undefined {
     return this.find(id)?.messages;
+  }
+
+  /** Rolling summary of context that was truncated out of a conversation, if any. */
+  getSummary(id: string): string | undefined {
+    return this.find(id)?.summary;
   }
 
   /** Delete a conversation; if it was current, the next append starts a new one. */
