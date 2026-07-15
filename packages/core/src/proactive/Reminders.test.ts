@@ -14,7 +14,7 @@ function tempDir(): string {
 
 describe('ReminderStore', () => {
   it('adds, persists/reloads, lists pending + due, and cancels', () => {
-    let t = 1000;
+    const t = 1000;
     const dir = tempDir();
     const store = new ReminderStore({ dir, now: () => t });
     store.add('drink water', 5000, 'r1');
@@ -33,7 +33,7 @@ describe('ReminderStore', () => {
 
 describe('ReminderScheduler', () => {
   it('fires due reminders on start and arms future ones with a fake timer', () => {
-    let t = 1000;
+    const t = 1000;
     const dir = tempDir();
     const store = new ReminderStore({ dir, now: () => t });
     store.add('now-due', 500, 'due');
@@ -61,7 +61,7 @@ describe('ReminderScheduler', () => {
   });
 
   it('re-arms (does not fire) a far-future reminder instead of firing early', () => {
-    let t = 0;
+    const t = 0;
     const dir = tempDir();
     const store = new ReminderStore({ dir, now: () => t });
     // 60 days out — well past the ~24.8-day setTimeout ceiling.

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { TaskManager, type TaskRunner, type TaskEmitter, type TaskRunEvents } from './TaskManager.js';
 import { ProgressMapper, friendlyTool } from './ProgressMapper.js';
 import type { Task, TaskProgress } from '@workerking/shared';
