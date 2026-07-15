@@ -32,6 +32,12 @@ export interface ProactiveNotice {
 export interface WorkerKingToolDeps {
   config: Pick<ConfigStore, 'get'>;
   screen: ScreenContextProvider;
+  /**
+   * Ask the user to approve a screenshot before it's taken (N15). Wired to the
+   * same fail-closed UI confirmation as the tool gate. Only consulted when
+   * `screenCaptureConsent` config is on.
+   */
+  confirmCapture?: (req: { target: 'window' | 'screen' }) => Promise<boolean>;
   /** Optional memory store; enables the `remember` tool when present. */
   memory?: MemoryStore;
   /** Optional retrieval index for recall/list_memories; defaults to keyword over `memory`. */
@@ -117,6 +123,16 @@ export function buildScreenTools(deps: WorkerKingToolDeps) {
     async (args) => {
       deps.audit?.({ tool: 'capture_screen', detail: `target=${args.target}` });
       if (!enabled()) return screenDisabledResult();
+      // N15: per-capture consent. When enabled, each screenshot needs explicit,
+      // fail-closed approval — a screenshot can expose anything on screen.
+      if (deps.config.get('screenCaptureConsent') === true) {
+        const approved = deps.confirmCapture
+          ? await deps.confirmCapture({ target: args.target })
+          : false;
+        if (!approved) {
+          return errorResult('The user declined the screenshot (screen-capture consent is on).');
+        }
+      }
       const ctx = await deps.screen.capture({ target: args.target, includeImage: true });
       if (!ctx.ok || !ctx.imageBase64) return errorResult(ctx.error ?? 'screenshot failed');
       return {

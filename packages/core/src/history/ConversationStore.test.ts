@@ -96,4 +96,42 @@ describe('ConversationStore', () => {
     }
     expect(s.list().length).toBeLessThanOrEqual(2);
   });
+
+  it('folds truncated messages into a rolling summary instead of losing them (N14)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'wk-conv-'));
+    const s = new ConversationStore({ dir, now, newId, maxMessagesPerConversation: 2 });
+    s.append('user', 'first question');
+    s.append('assistant', 'first answer');
+    s.append('user', 'second question'); // evicts "first question"
+    const id = s.currentId();
+    expect(s.load(id)?.map((m) => m.text)).toEqual(['first answer', 'second question']);
+    const summary = s.getSummary(id);
+    expect(summary).toBeDefined();
+    expect(summary).toContain('user: first question');
+  });
+
+  it('accumulates the summary across multiple truncations and stays bounded', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'wk-conv-'));
+    const s = new ConversationStore({ dir, now, newId, maxMessagesPerConversation: 1 });
+    for (let i = 0; i < 5; i++) s.append('user', `turn ${i}`);
+    const summary = s.getSummary(s.currentId())!;
+    expect(summary).toContain('turn 0');
+    expect(summary).toContain('turn 3'); // earlier turns preserved in the roll-up
+    expect(summary.length).toBeLessThanOrEqual(1201);
+  });
+
+  it('uses an injected summarizer when provided', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'wk-conv-'));
+    const s = new ConversationStore({
+      dir,
+      now,
+      newId,
+      maxMessagesPerConversation: 1,
+      summarize: ({ dropped, previous }) => `${previous ?? ''}[${dropped.length}]`,
+    });
+    s.append('user', 'a');
+    s.append('user', 'b'); // drops 'a'
+    s.append('user', 'c'); // drops 'b'
+    expect(s.getSummary(s.currentId())).toBe('[1][1]');
+  });
 });

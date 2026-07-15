@@ -96,6 +96,7 @@ export class Settings {
       <label>"Explain selection" hotkey<input data-cfg="explainHotkey" data-hotkey readonly value="${str('explainHotkey')}" placeholder="Click, then press keys"></label>
       <label class="check"><input type="checkbox" data-cfg="wakeWordEnabled" ${checked('wakeWordEnabled')}> Always-listening wake word</label>
       <label class="check"><input type="checkbox" data-cfg="screenAwareness" ${checked('screenAwareness')}> Let it see my screen</label>
+      <label class="check"><input type="checkbox" data-cfg="screenCaptureConsent" ${checked('screenCaptureConsent')}> Ask me before every screenshot</label>
       <label class="check"><input type="checkbox" data-cfg="memoryEnabled" ${checked('memoryEnabled')}> Remember things about me across sessions</label>
       <label class="check"><input type="checkbox" data-cfg="semanticMemory" ${checked('semanticMemory')}> Smarter memory search (local embeddings)</label>
       <label class="check"><input type="checkbox" data-cfg="remindersEnabled" ${checked('remindersEnabled')}> Allow reminders</label>

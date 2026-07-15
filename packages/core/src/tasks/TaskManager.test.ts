@@ -1,6 +1,10 @@
 import { describe, it, expect } from 'vitest';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { TaskManager, type TaskRunner, type TaskEmitter, type TaskRunEvents } from './TaskManager.js';
 import { ProgressMapper, friendlyTool } from './ProgressMapper.js';
+import { TaskStore } from './TaskStore.js';
 import type { Task, TaskProgress } from '@workerking/shared';
 
 function collectEmitter() {
@@ -222,5 +226,22 @@ describe('TaskManager concurrency', () => {
     release.get('a')!();
     await tick();
     expect(release.has('b')).toBe(false); // b never ran
+  });
+
+  it('persists to an injected store so check() survives eviction (N12)', async () => {
+    const store = new TaskStore({ dir: mkdtempSync(join(tmpdir(), 'wk-tm-')) });
+    const c = collectEmitter();
+    clock = 0;
+    idN = 0;
+    const runner: TaskRunner = {
+      run: async (_p, events) => events.onDone('all done'),
+    };
+    const tm = new TaskManager({ runner, emit: c.emit, now, newId, throttleMs: 100, store });
+    const id = tm.create('do a thing');
+    await new Promise((r) => setTimeout(r, 0)); // let the async run settle + evict
+
+    expect(tm.activeCount()).toBe(0); // evicted from memory
+    expect(tm.check(id)?.state).toBe('done'); // ...but found via the store
+    expect(store.get(id)?.result?.summary).toBe('all done');
   });
 });

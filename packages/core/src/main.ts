@@ -18,6 +18,7 @@ import { MemoryStore } from './memory/MemoryStore.js';
 import { createMemoryIndex } from './memory/MemoryIndex.js';
 import { InteractionLog } from './memory/InteractionLog.js';
 import { ConversationStore } from './history/ConversationStore.js';
+import { TaskStore } from './tasks/TaskStore.js';
 import { NightlyJob, createClaudeDistiller } from './memory/NightlyJob.js';
 import { ReminderStore } from './proactive/ReminderStore.js';
 import { ReminderScheduler } from './proactive/ReminderScheduler.js';
@@ -50,6 +51,7 @@ export interface DaemonDeps {
   conversations: ConversationStore;
   watchStore: WatchStore;
   reminderStore: ReminderStore;
+  taskStore: TaskStore;
 }
 
 /** Build the real file-backed stores, overriding any provided (tests inject). */
@@ -60,6 +62,7 @@ export function createDaemonDeps(overrides: Partial<DaemonDeps> = {}): DaemonDep
     conversations: overrides.conversations ?? new ConversationStore(),
     watchStore: overrides.watchStore ?? new WatchStore(),
     reminderStore: overrides.reminderStore ?? new ReminderStore(),
+    taskStore: overrides.taskStore ?? new TaskStore(),
   };
 }
 
@@ -185,9 +188,16 @@ async function resolveBrain(
   });
 
   // Screen-awareness + memory + proactive tools (capture runs in Electron main).
+  const captureConfirmer = new WsToolConfirmer(server);
   const toolServer = createWorkerKingToolServer({
     config,
     screen: new WsScreenContextProvider(server),
+    // N15: route per-capture consent through the same fail-closed UI prompt as N1.
+    confirmCapture: (req) =>
+      captureConfirmer.confirm({
+        tool: 'capture_screen',
+        summary: `take a screenshot of your ${req.target}`,
+      }),
     memory,
     memoryIndex,
     proactiveNotify,
@@ -296,6 +306,9 @@ export async function startDaemon(opts: StartDaemonOptions = {}): Promise<Runnin
   const server = new WsServer({ token, host, daemonVersion: DAEMON_VERSION });
   // Stores are injected (tests) or built here — never module-global.
   const deps = createDaemonDeps(opts.deps);
+  // N12: mark any task left mid-run by a previous crash/restart as interrupted.
+  const interrupted = deps.taskStore.reconcileOnBoot();
+  if (interrupted.length) log.info('reconciled interrupted tasks', { count: interrupted.length });
 
   // Pick the brain without blocking boot: an injected brain or the echo brain is
   // used directly; otherwise a DeferredBrain is installed now and the real Claude
@@ -337,6 +350,7 @@ export async function startDaemon(opts: StartDaemonOptions = {}): Promise<Runnin
       reload: (watches) => proactiveHolder.manager?.reload(watches),
     },
     log,
+    deps.taskStore,
   );
 
   const requestedPort =
