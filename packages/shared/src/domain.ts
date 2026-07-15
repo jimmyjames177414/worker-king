@@ -177,3 +177,35 @@ export const avatarStateSchema = z.enum([
   'alert',
 ]);
 export type AvatarState = z.infer<typeof avatarStateSchema>;
+
+// ---------------------------------------------------------------------------
+// Conversation history — durable, browsable past chats.
+// ---------------------------------------------------------------------------
+
+/** A scheduled proactive "watch": a prompt run on a cron to decide if it's worth speaking up. */
+export const watchSchema = z.object({
+  id: z.string(),
+  prompt: z.string(),
+  /** 5-field cron expression. */
+  cron: z.string(),
+  /** Shipped with WorkerKing (not user-removable) vs user-created. */
+  builtin: z.boolean().optional(),
+});
+export type Watch = z.infer<typeof watchSchema>;
+
+export const conversationMessageSchema = z.object({
+  role: z.enum(['user', 'assistant']),
+  text: z.string(),
+  ts: z.number(),
+});
+export type ConversationMessage = z.infer<typeof conversationMessageSchema>;
+
+/** Lightweight metadata for a conversation list (no message bodies). */
+export const conversationSummarySchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  createdAt: z.number(),
+  updatedAt: z.number(),
+  messageCount: z.number(),
+});
+export type ConversationSummary = z.infer<typeof conversationSummarySchema>;

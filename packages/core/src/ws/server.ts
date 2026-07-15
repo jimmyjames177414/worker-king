@@ -33,6 +33,37 @@ export interface WsServerOptions {
   daemonVersion: string;
   /** Bind address. Defaults to loopback only. */
   address?: string;
+  /** Heartbeat interval (ms). 0 disables. Defaults to 30_000. */
+  heartbeatMs?: number;
+}
+
+/** One heartbeat entry: liveness plus the socket controls the sweep needs. */
+export interface HeartbeatEntry {
+  alive: boolean;
+  ping(): void;
+  terminate(): void;
+}
+
+/**
+ * Run one heartbeat round over the entries. Any entry that hasn't answered since
+ * the last round (`alive === false`) is terminated and its id returned for
+ * removal; the rest are marked pending and pinged. Native ws auto-replies to the
+ * ping with a pong, which flips `alive` back to true before the next round — so a
+ * half-open socket (e.g. a WSL localhost drop after sleep) is reaped instead of
+ * lingering in the registry forever. Pure/synchronous for testability.
+ */
+export function runHeartbeat(entries: Map<string, HeartbeatEntry>): string[] {
+  const dropped: string[] = [];
+  for (const [id, e] of entries) {
+    if (!e.alive) {
+      e.terminate();
+      dropped.push(id);
+      continue;
+    }
+    e.alive = false;
+    e.ping();
+  }
+  return dropped;
 }
 
 /**
@@ -45,18 +76,22 @@ export class WsServer {
   private readonly host: 'windows' | 'wsl' | 'unknown';
   private readonly daemonVersion: string;
   private readonly address: string;
+  private readonly heartbeatMs: number;
   private wss?: WebSocketServer;
   private handler?: MessageHandler;
   private readonly clients = new Map<string, WsClient>();
+  private readonly heartbeats = new Map<string, HeartbeatEntry>();
   private readonly replyHandlers = new Map<string, (env: WsEnvelope) => void>();
   private readonly clientConnectedHandlers = new Set<(client: WsClient) => void>();
   private connSeq = 0;
+  private heartbeatTimer?: ReturnType<typeof setInterval>;
 
   constructor(opts: WsServerOptions) {
     this.token = opts.token ?? newToken();
     this.host = opts.host;
     this.daemonVersion = opts.daemonVersion;
     this.address = opts.address ?? '127.0.0.1';
+    this.heartbeatMs = opts.heartbeatMs ?? 30_000;
   }
 
   onMessage(handler: MessageHandler): void {
@@ -89,7 +124,19 @@ export class WsServer {
         resolve(addr.port);
       });
       wss.on('connection', (socket) => this.handleConnection(socket));
+      if (this.heartbeatMs > 0) {
+        this.heartbeatTimer = setInterval(() => this.heartbeatSweep(), this.heartbeatMs);
+        this.heartbeatTimer.unref?.(); // never keep the process alive on our own
+      }
     });
+  }
+
+  /** Run one heartbeat round, dropping any client that went silent. Public for tests. */
+  heartbeatSweep(): void {
+    for (const id of runHeartbeat(this.heartbeats)) {
+      this.clients.delete(id);
+      this.heartbeats.delete(id);
+    }
   }
 
   private handleConnection(socket: WebSocket): void {
@@ -150,11 +197,16 @@ export class WsServer {
     });
 
     socket.on('close', () => {
-      if (client) this.clients.delete(client.connectionId);
+      if (client) this.dropClient(client.connectionId);
     });
     socket.on('error', () => {
-      if (client) this.clients.delete(client.connectionId);
+      if (client) this.dropClient(client.connectionId);
     });
+  }
+
+  private dropClient(connectionId: string): void {
+    this.clients.delete(connectionId);
+    this.heartbeats.delete(connectionId);
   }
 
   private registerClient(socket: WebSocket, role: WsRole): WsClient {
@@ -169,6 +221,22 @@ export class WsServer {
       },
     };
     this.clients.set(connectionId, client);
+    this.heartbeats.set(connectionId, {
+      alive: true,
+      ping: () => {
+        try {
+          socket.ping();
+        } catch {
+          // socket dying mid-ping; the next sweep reaps it
+        }
+      },
+      terminate: () => socket.terminate(),
+    });
+    // Native pong (auto-sent by ws in reply to our ping) proves the peer is alive.
+    socket.on('pong', () => {
+      const entry = this.heartbeats.get(connectionId);
+      if (entry) entry.alive = true;
+    });
     return client;
   }
 
@@ -204,8 +272,11 @@ export class WsServer {
 
   close(): Promise<void> {
     return new Promise((resolve) => {
+      if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = undefined;
       for (const c of this.clients.values()) c.raw.close(1001, 'shutdown');
       this.clients.clear();
+      this.heartbeats.clear();
       if (this.wss) this.wss.close(() => resolve());
       else resolve();
     });

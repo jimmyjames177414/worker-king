@@ -25,6 +25,8 @@ export interface TaskRunner {
 /** What TaskManager emits; the daemon wires these to WS broadcasts. */
 export interface TaskEmitter {
   created(task: Task): void;
+  /** A task changed state without progress/finishing — e.g. queued → running. */
+  updated(task: Task): void;
   progress(taskId: string, progress: TaskProgress): void;
   done(task: Task): void;
   error(taskId: string, error: string): void;
@@ -43,34 +45,61 @@ export interface TaskManagerDeps {
   now: () => number;
   newId: () => string;
   throttleMs?: number;
+  /** Max tasks running at once; the rest wait in `queued`. Default 3. */
+  maxConcurrent?: number;
 }
 
 export class TaskManager {
   private readonly tasks = new Map<string, RunningTask>();
+  private readonly queue: string[] = [];
+  private readonly maxConcurrent: number;
+  private runningCount = 0;
 
-  constructor(private readonly deps: TaskManagerDeps) {}
+  constructor(private readonly deps: TaskManagerDeps) {
+    this.maxConcurrent = Math.max(1, deps.maxConcurrent ?? 3);
+  }
 
   /** Start a task; returns its id immediately (fire-and-forget for the caller). */
   create(prompt: string): string {
     const id = this.deps.newId();
-    const abort = new AbortController();
     const task: Task = {
       id,
       prompt,
       createdAt: this.deps.now(),
-      state: 'running',
+      state: 'queued',
       progress: [],
     };
     const running: RunningTask = {
       task,
-      abort,
+      abort: new AbortController(),
       mapper: new ProgressMapper(this.deps.now, this.deps.throttleMs),
     };
     this.tasks.set(id, running);
-    this.deps.emit.created(task);
 
-    void this.run(running);
+    // Start immediately if there's a free slot, otherwise announce it queued.
+    if (this.runningCount < this.maxConcurrent) {
+      task.state = 'running';
+      this.runningCount++;
+      this.deps.emit.created(task);
+      void this.run(running);
+    } else {
+      this.deps.emit.created(task); // state: 'queued'
+      this.queue.push(id);
+    }
     return id;
+  }
+
+  /** Promote queued tasks into free slots. */
+  private pump(): void {
+    while (this.runningCount < this.maxConcurrent && this.queue.length) {
+      const id = this.queue.shift()!;
+      const running = this.tasks.get(id);
+      if (!running || running.abort.signal.aborted) continue;
+      running.task.state = 'running';
+      this.runningCount++;
+      this.deps.emit.updated(running.task); // queued → running
+      void this.run(running);
+    }
   }
 
   private async run(running: RunningTask): Promise<void> {
@@ -122,6 +151,8 @@ export class TaskManager {
       }
     } finally {
       this.tasks.delete(task.id);
+      this.runningCount--;
+      this.pump(); // a slot freed — start the next queued task
     }
   }
 
@@ -130,15 +161,35 @@ export class TaskManager {
     return this.tasks.get(taskId)?.task;
   }
 
-  /** Cancel a running task; returns true if it was found. */
+  /** Cancel a running or queued task; returns true if it was found. */
   cancel(taskId: string): boolean {
     const running = this.tasks.get(taskId);
     if (!running) return false;
+    if (running.task.state === 'queued') {
+      // Never started — drop it from the queue and report it cancelled directly.
+      const i = this.queue.indexOf(taskId);
+      if (i >= 0) this.queue.splice(i, 1);
+      running.task.state = 'cancelled';
+      this.tasks.delete(taskId);
+      this.deps.emit.cancelled(taskId);
+      return true;
+    }
     running.abort.abort();
     return true;
   }
 
+  /** Total tasks tracked (queued + running). */
   activeCount(): number {
     return this.tasks.size;
+  }
+
+  /** Tasks currently executing (excludes queued). */
+  runningTasks(): number {
+    return this.runningCount;
+  }
+
+  /** Tasks waiting for a free slot. */
+  queuedTasks(): number {
+    return this.queue.length;
   }
 }

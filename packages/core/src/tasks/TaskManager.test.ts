@@ -1,22 +1,24 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { TaskManager, type TaskRunner, type TaskEmitter, type TaskRunEvents } from './TaskManager.js';
 import { ProgressMapper, friendlyTool } from './ProgressMapper.js';
 import type { Task, TaskProgress } from '@workerking/shared';
 
 function collectEmitter() {
   const created: Task[] = [];
+  const updated: Task[] = [];
   const progress: Array<{ id: string; p: TaskProgress }> = [];
   const done: Task[] = [];
   const errors: Array<{ id: string; error: string }> = [];
   const cancelled: string[] = [];
   const emit: TaskEmitter = {
-    created: (t) => created.push(t),
+    created: (t) => created.push({ ...t }),
+    updated: (t) => updated.push({ ...t }),
     progress: (id, p) => progress.push({ id, p }),
-    done: (t) => done.push(t),
+    done: (t) => done.push({ ...t }),
     error: (id, error) => errors.push({ id, error }),
     cancelled: (id) => cancelled.push(id),
   };
-  return { emit, created, progress, done, errors, cancelled };
+  return { emit, created, updated, progress, done, errors, cancelled };
 }
 
 let clock = 0;
@@ -127,5 +129,98 @@ describe('TaskManager', () => {
     expect(tm.check(id)?.id).toBe(id);
     expect(tm.cancel('nope')).toBe(false);
     tm.cancel(id);
+  });
+});
+
+describe('TaskManager concurrency', () => {
+  /** A runner whose tasks stay open until released, keyed by prompt. */
+  function gatedRunner() {
+    const release = new Map<string, () => void>();
+    const runner: TaskRunner = {
+      run: (prompt, events) =>
+        new Promise<void>((resolve) => {
+          release.set(prompt, () => {
+            events.onDone(`done ${prompt}`);
+            resolve();
+          });
+        }),
+    };
+    return { runner, release };
+  }
+
+  function makeManager(runner: TaskRunner, maxConcurrent: number) {
+    const c = collectEmitter();
+    clock = 0;
+    idN = 0;
+    const tm = new TaskManager({ runner, emit: c.emit, now, newId, throttleMs: 100, maxConcurrent });
+    return { tm, ...c };
+  }
+
+  const tick = () => new Promise((r) => setTimeout(r, 0));
+
+  it('caps running tasks and queues the rest', async () => {
+    const { runner, release } = gatedRunner();
+    const { tm, created } = makeManager(runner, 1);
+    tm.create('a');
+    tm.create('b');
+    tm.create('c');
+    await tick();
+
+    expect(tm.runningTasks()).toBe(1);
+    expect(tm.queuedTasks()).toBe(2);
+    // First announced running, the other two queued.
+    expect(created.map((t) => t.state)).toEqual(['running', 'queued', 'queued']);
+
+    release.get('a')!();
+    await tick();
+    expect(tm.runningTasks()).toBe(1); // b promoted
+    expect(tm.queuedTasks()).toBe(1);
+  });
+
+  it('emits updated (queued → running) as slots free', async () => {
+    const { runner, release } = gatedRunner();
+    const { tm, updated } = makeManager(runner, 1);
+    tm.create('a');
+    tm.create('b');
+    await tick();
+    expect(updated).toHaveLength(0);
+
+    release.get('a')!();
+    await tick();
+    expect(updated.map((t) => t.id)).toEqual(['task-2']);
+    expect(updated[0].state).toBe('running');
+  });
+
+  it('drains the whole queue in order', async () => {
+    const { runner, release } = gatedRunner();
+    const { tm, done } = makeManager(runner, 2);
+    for (const p of ['a', 'b', 'c', 'd']) tm.create(p);
+    await tick();
+    expect(tm.runningTasks()).toBe(2);
+
+    for (const p of ['a', 'b', 'c', 'd']) {
+      release.get(p)?.();
+      await tick();
+    }
+    expect(done.map((t) => t.result?.summary)).toEqual(['done a', 'done b', 'done c', 'done d']);
+    expect(tm.activeCount()).toBe(0);
+  });
+
+  it('cancels a queued task without ever running it', async () => {
+    const { runner, release } = gatedRunner();
+    const { tm, cancelled } = makeManager(runner, 1);
+    tm.create('a');
+    const queuedId = tm.create('b');
+    await tick();
+    expect(tm.queuedTasks()).toBe(1);
+
+    expect(tm.cancel(queuedId)).toBe(true);
+    expect(cancelled).toContain(queuedId);
+    expect(tm.queuedTasks()).toBe(0);
+
+    // Releasing the first must NOT start the cancelled one.
+    release.get('a')!();
+    await tick();
+    expect(release.has('b')).toBe(false); // b never ran
   });
 });

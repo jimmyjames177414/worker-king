@@ -5,6 +5,17 @@ import type { Brain } from '../brain/Brain.js';
 import { TaskManager } from '../tasks/TaskManager.js';
 import { daemonEnvelopeContext } from '../util/ids.js';
 import type { InteractionLog } from '../memory/InteractionLog.js';
+import type { ConversationStore } from '../history/ConversationStore.js';
+import type { WatchStore } from '../proactive/WatchStore.js';
+import { defaultWatches } from '../proactive/ProactiveManager.js';
+import type { Watch } from '@workerking/shared';
+
+/** How the Supervisor manages proactive watches (persist + live reload). */
+export interface WatchDeps {
+  store: WatchStore;
+  /** Reschedule the running ProactiveManager with the full watch set. */
+  reload: (watches: Watch[]) => void;
+}
 
 /**
  * Supervisor — the daemon's message router.
@@ -24,12 +35,15 @@ export class Supervisor {
     private readonly config: ConfigStore,
     private readonly brain: Brain,
     private readonly log?: InteractionLog,
+    private readonly history?: ConversationStore,
+    private readonly watches?: WatchDeps,
   ) {
     // TaskManager drives delegated (voice) work; its events become task.* broadcasts.
     this.tasks = new TaskManager({
       runner: brain,
       emit: {
         created: (task) => server.broadcast('task.created', { task }),
+        updated: (task) => server.broadcast('task.updated', { task }),
         progress: (taskId, progress) => server.broadcast('task.progress', { taskId, progress }),
         done: (task) => {
           server.broadcast('task.done', { task });
@@ -63,6 +77,18 @@ export class Supervisor {
         return this.handleConfigGet(client, env as WsEnvelope<'config.get'>);
       case 'config.set':
         return this.handleConfigSet(env as WsEnvelope<'config.set'>);
+      case 'history.list':
+        return this.handleHistoryList(client);
+      case 'history.load':
+        return this.handleHistoryLoad(client, env as WsEnvelope<'history.load'>);
+      case 'history.new':
+        return this.handleHistoryNew(client);
+      case 'watches.list':
+        return this.sendWatches(client);
+      case 'watches.add':
+        return this.handleWatchAdd(client, env as WsEnvelope<'watches.add'>);
+      case 'watches.remove':
+        return this.handleWatchRemove(client, env as WsEnvelope<'watches.remove'>);
       default:
         // Not handled in this phase.
         return;
@@ -109,11 +135,13 @@ export class Supervisor {
     env: WsEnvelope<'chat.user_message'>,
   ): Promise<void> {
     const { text, messageId } = env.payload;
+    this.history?.append('user', text);
     try {
       const full = await this.brain.respond(text, (delta) => {
         client.send('chat.assistant_delta', { messageId, delta });
       });
       client.send('chat.assistant_done', { messageId, text: full });
+      this.history?.append('assistant', full);
       this.log?.append('chat', `user: ${text} | assistant: ${full.slice(0, 200)}`);
     } catch (err) {
       client.send('error', {
@@ -141,5 +169,52 @@ export class Supervisor {
   private handleConfigSet(env: WsEnvelope<'config.set'>): void {
     const { key, value } = env.payload;
     this.config.set(key, value); // triggers config.changed broadcast via onChange
+  }
+
+  private handleHistoryList(client: WsClient): void {
+    client.send('history.list_result', { conversations: this.history?.list() ?? [] });
+  }
+
+  private handleHistoryLoad(client: WsClient, env: WsEnvelope<'history.load'>): void {
+    const { conversationId } = env.payload;
+    this.history?.setCurrent(conversationId); // resume: new turns append here
+    client.send('history.load_result', {
+      conversationId,
+      messages: this.history?.load(conversationId) ?? [],
+    });
+  }
+
+  private handleHistoryNew(client: WsClient): void {
+    const conversationId = this.history?.startNew() ?? '';
+    client.send('history.new_result', { conversationId });
+  }
+
+  /** All watches = built-ins + user-defined. */
+  private allWatches(): Watch[] {
+    return [...defaultWatches(), ...(this.watches?.store.list() ?? [])];
+  }
+
+  private sendWatches(client: WsClient): void {
+    client.send('watches.list_result', { watches: this.allWatches() });
+  }
+
+  private handleWatchAdd(client: WsClient, env: WsEnvelope<'watches.add'>): void {
+    if (this.watches) {
+      try {
+        this.watches.store.add(env.payload.prompt, env.payload.cron);
+        this.watches.reload(this.allWatches());
+      } catch (err) {
+        client.send('error', { message: String(err), code: 'watch_invalid' });
+      }
+    }
+    this.sendWatches(client);
+  }
+
+  private handleWatchRemove(client: WsClient, env: WsEnvelope<'watches.remove'>): void {
+    if (this.watches) {
+      this.watches.store.remove(env.payload.id);
+      this.watches.reload(this.allWatches());
+    }
+    this.sendWatches(client);
   }
 }

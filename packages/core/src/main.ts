@@ -1,5 +1,5 @@
 import { writeFileSync } from 'node:fs';
-import type { PayloadOf } from '@workerking/shared';
+import type { PayloadOf, CapabilityManifest } from '@workerking/shared';
 import { WsServer } from './ws/server.js';
 import { ConfigStore } from './config/ConfigStore.js';
 import { Supervisor } from './supervisor/Supervisor.js';
@@ -12,18 +12,26 @@ import { realCapabilityQueryFn } from './capability/realCapabilityQuery.js';
 import { assemblePersonaAppend } from './persona/assemblePersona.js';
 import { assemblePersonaFromCard, parseCharacterCard } from './persona/CharacterCard.js';
 import { MemoryStore } from './memory/MemoryStore.js';
+import { createMemoryIndex } from './memory/MemoryIndex.js';
 import { InteractionLog } from './memory/InteractionLog.js';
+import { ConversationStore } from './history/ConversationStore.js';
 import { NightlyJob, createClaudeDistiller } from './memory/NightlyJob.js';
 import { ReminderStore } from './proactive/ReminderStore.js';
 import { ReminderScheduler } from './proactive/ReminderScheduler.js';
 import { ProactiveManager, defaultWatches } from './proactive/ProactiveManager.js';
+import { WatchStore } from './proactive/WatchStore.js';
 import { detectHost } from './util/host.js';
 import { daemonEnvelopeContext, newToken } from './util/ids.js';
 import { installFileLog } from './util/fileLog.js';
+import { createLogger } from './util/logger.js';
+
+const log = createLogger({ scope: 'workerking' });
 
 // Process-wide memory store + interaction log (file-based under ~/.claude/workerking).
 const memory = new MemoryStore();
 const interactionLog = new InteractionLog();
+const conversations = new ConversationStore();
+const watchStore = new WatchStore();
 const reminderStore = new ReminderStore();
 
 /** The Voyager-pattern nudge: encourage Claude to grow its own skills. */
@@ -100,6 +108,7 @@ async function resolveBrain(
   server: WsServer,
   mode: 'auto' | 'claude',
   registerDisposable: (d: Disposable) => void,
+  proactiveHolder: { manager?: ProactiveManager } = {},
 ): Promise<void> {
   const cwd = config.get('claudeCwd') as string | undefined;
 
@@ -141,14 +150,21 @@ async function resolveBrain(
     return id;
   };
 
+  // Retrieval backend for recall/list_memories: semantic if enabled + model present,
+  // else keyword. Built once (embedding-model init is expensive); reads the store live.
+  const memoryIndex = await createMemoryIndex(memory, {
+    semantic: config.get('semanticMemory') === true,
+  });
+
   // Screen-awareness + memory + proactive tools (capture runs in Electron main).
   const toolServer = createWorkerKingToolServer({
     config,
     screen: new WsScreenContextProvider(server),
     memory,
+    memoryIndex,
     proactiveNotify,
     scheduleReminder,
-    audit: (e) => process.stderr.write(`[workerking][tool] ${e.tool}: ${e.detail}\n`),
+    audit: (e) => log.child('tool').info(e.tool, { detail: e.detail }),
   });
   const claudeOpts = {
     cwd,
@@ -159,15 +175,26 @@ async function resolveBrain(
   };
 
   const startCapabilities = () => {
+    let lastManifest: CapabilityManifest | undefined;
     const cm = new CapabilityManager({
       queryFn: realCapabilityQueryFn,
       sdkOptions: cwd ? { cwd } : {},
-      broadcast: (manifest) => server.broadcast('capability.updated', { manifest }),
+      broadcast: (manifest) => {
+        lastManifest = manifest;
+        server.broadcast('capability.updated', { manifest });
+      },
       cwd,
+    });
+    // Replay the latest manifest to any client that connects after it was built,
+    // so the chat command palette always has capabilities to show.
+    registerDisposable({
+      stop: server.onClientConnected((client) => {
+        if (lastManifest) client.send('capability.updated', { manifest: lastManifest });
+      }),
     });
     registerDisposable(cm);
     cm.start().catch((e) =>
-      process.stderr.write(`[workerking] capability manifest build failed: ${String(e)}\n`),
+      log.warn('capability manifest build failed', { error: String(e) }),
     );
 
     // Nightly memory consolidation (Letta sleep-time), when memory is enabled.
@@ -185,9 +212,10 @@ async function resolveBrain(
       const manager = new ProactiveManager({
         respond: (prompt) => createClaudeBackend({ cwd }).respond(prompt, () => {}),
         notify: proactiveNotify,
-        watches: defaultWatches(),
+        watches: [...defaultWatches(), ...watchStore.list()],
       });
       manager.start();
+      proactiveHolder.manager = manager; // let the supervisor live-reload it
       registerDisposable({ stop: () => manager.stop() });
     }
   };
@@ -200,14 +228,14 @@ async function resolveBrain(
 
   const health = await probeClaude(cwd);
   if (health.ok) {
-    process.stderr.write('[workerking] Claude Code ready — using ClaudeBackend\n');
+    log.info('Claude Code ready — using ClaudeBackend');
     deferred.set(createClaudeBackend(claudeOpts));
     startCapabilities();
   } else {
-    process.stderr.write(
-      `[workerking] Claude Code unavailable (${health.detail ?? 'unknown'}); ` +
-        'falling back to EchoBrain. Run `claude login` and restart for the real brain.\n',
-    );
+    log.warn('Claude Code unavailable; falling back to EchoBrain', {
+      detail: health.detail ?? 'unknown',
+      hint: 'Run `claude login` and restart for the real brain.',
+    });
     deferred.set(new EchoBrain());
   }
 }
@@ -221,7 +249,8 @@ export async function startDaemon(opts: StartDaemonOptions = {}): Promise<Runnin
   const token = opts.token ?? process.env.WORKERKING_TOKEN ?? newToken();
   const host = detectHost();
 
-  const config = new ConfigStore();
+  // Headless daemon: persist config so a standalone run doesn't reset on restart.
+  const config = new ConfigStore(undefined, { persist: true });
   const server = new WsServer({ token, host, daemonVersion: DAEMON_VERSION });
 
   // Pick the brain without blocking boot: an injected brain or the echo brain is
@@ -233,6 +262,9 @@ export async function startDaemon(opts: StartDaemonOptions = {}): Promise<Runnin
   // disposables (capability manager / nightly job / proactive) to exist first.
   let brainReady: Promise<void> = Promise.resolve();
   let brain: Brain;
+  // Holds the running ProactiveManager (set once the real brain resolves) so the
+  // supervisor can live-reload watches when the user adds/removes them.
+  const proactiveHolder: { manager?: ProactiveManager } = {};
   if (opts.brain) {
     brain = opts.brain;
   } else if (mode === 'echo') {
@@ -240,11 +272,19 @@ export async function startDaemon(opts: StartDaemonOptions = {}): Promise<Runnin
   } else {
     const deferred = new DeferredBrain();
     brain = deferred;
-    brainReady = resolveBrain(deferred, config, server, mode, (d) => disposables.push(d)).catch(
-      () => {},
-    );
+    brainReady = resolveBrain(
+      deferred,
+      config,
+      server,
+      mode,
+      (d) => disposables.push(d),
+      proactiveHolder,
+    ).catch(() => {});
   }
-  new Supervisor(server, config, brain, interactionLog);
+  new Supervisor(server, config, brain, interactionLog, conversations, {
+    store: watchStore,
+    reload: (watches) => proactiveHolder.manager?.reload(watches),
+  });
 
   const requestedPort =
     opts.port ?? (process.env.WORKERKING_PORT ? Number(process.env.WORKERKING_PORT) : 0);
@@ -283,7 +323,7 @@ if (isDirectRun) {
   installFileLog();
   startDaemon()
     .then((d) => {
-      process.stderr.write(`[workerking] daemon listening on 127.0.0.1:${d.port}\n`);
+      log.info('daemon listening', { address: `127.0.0.1:${d.port}` });
       const shutdown = () => {
         d.stop().finally(() => process.exit(0));
       };
@@ -291,7 +331,7 @@ if (isDirectRun) {
       process.on('SIGTERM', shutdown);
     })
     .catch((err) => {
-      process.stderr.write(`[workerking] daemon failed to start: ${String(err)}\n`);
+      log.error('daemon failed to start', { error: String(err) });
       process.exit(1);
     });
 }

@@ -4,6 +4,9 @@ import {
   taskProgressSchema,
   capabilityManifestSchema,
   avatarStateSchema,
+  conversationMessageSchema,
+  conversationSummarySchema,
+  watchSchema,
 } from './domain.js';
 
 /**
@@ -111,6 +114,26 @@ const proactiveNotifyPayload = z.object({
 });
 
 const taskCreatedPayload = z.object({ task: taskSchema });
+const taskUpdatedPayload = z.object({ task: taskSchema });
+
+// Conversation history (renderer request -> daemon result, keyed by kind).
+const historyListPayload = z.object({});
+const historyListResultPayload = z.object({
+  conversations: z.array(conversationSummarySchema),
+});
+const historyLoadPayload = z.object({ conversationId: z.string() });
+const historyLoadResultPayload = z.object({
+  conversationId: z.string(),
+  messages: z.array(conversationMessageSchema),
+});
+const historyNewPayload = z.object({});
+const historyNewResultPayload = z.object({ conversationId: z.string() });
+
+// Proactive watches management (renderer request -> daemon result).
+const watchesListPayload = z.object({});
+const watchesListResultPayload = z.object({ watches: z.array(watchSchema) });
+const watchesAddPayload = z.object({ prompt: z.string(), cron: z.string() });
+const watchesRemovePayload = z.object({ id: z.string() });
 const taskProgressPayload = z.object({
   taskId: z.string(),
   progress: taskProgressSchema,
@@ -180,6 +203,7 @@ export const payloadSchemas = {
   'proactive.notify': proactiveNotifyPayload,
 
   'task.created': taskCreatedPayload,
+  'task.updated': taskUpdatedPayload,
   'task.progress': taskProgressPayload,
   'task.done': taskDonePayload,
   'task.error': taskErrorPayload,
@@ -188,6 +212,18 @@ export const payloadSchemas = {
   'avatar.state': avatarStatePayload,
 
   'capability.updated': capabilityUpdatedPayload,
+
+  'history.list': historyListPayload,
+  'history.list_result': historyListResultPayload,
+  'history.load': historyLoadPayload,
+  'history.load_result': historyLoadResultPayload,
+  'history.new': historyNewPayload,
+  'history.new_result': historyNewResultPayload,
+
+  'watches.list': watchesListPayload,
+  'watches.list_result': watchesListResultPayload,
+  'watches.add': watchesAddPayload,
+  'watches.remove': watchesRemovePayload,
 
   'config.get': configGetPayload,
   'config.set': configSetPayload,

@@ -11,7 +11,7 @@ if (process.env['WORKERKING_APP_LOG']) {
   mkdirSync(dirname(logPath), { recursive: true });
   const logStream = createWriteStream(logPath, { flags: 'a' });
   const origWrite = process.stderr.write.bind(process.stderr);
-  // @ts-expect-error overriding write signature
+  // Tee writes to the log file, then delegate to the original stderr.write.
   process.stderr.write = (chunk: unknown, ...args: unknown[]) => {
     logStream.write(String(chunk));
     return (origWrite as (...a: unknown[]) => boolean)(chunk, ...args);
@@ -40,6 +40,7 @@ import { captureScreen } from './ScreenCapture.js';
 interface AppConfig {
   assistantName: string;
   personality: string;
+  theme: 'system' | 'light' | 'dark';
   voiceProvider: 'gpt-realtime' | 'local-cascade';
   openaiModel: string;
   hotkey: string;
@@ -47,9 +48,12 @@ interface AppConfig {
   wakeWordEnabled: boolean;
   screenAwareness: boolean;
   memoryEnabled: boolean;
+  semanticMemory: boolean;
   remindersEnabled: boolean;
   proactiveEnabled: boolean;
   explainHotkey: string;
+  inputDeviceId?: string;
+  outputDeviceId?: string;
   userName?: string;
   characterCard?: unknown;
   [k: string]: unknown;
@@ -59,6 +63,7 @@ const config = new Store<AppConfig>({
   name: 'config',
   defaults: {
     assistantName: 'WorkerKing',
+    theme: 'system',
     personality:
       'A capable, upbeat desktop companion. Concise out loud, thorough when it matters.',
     voiceProvider: 'gpt-realtime',
@@ -68,6 +73,7 @@ const config = new Store<AppConfig>({
     wakeWordEnabled: false,
     screenAwareness: false,
     memoryEnabled: true,
+    semanticMemory: false,
     remindersEnabled: true,
     proactiveEnabled: false,
     explainHotkey: 'Control+Shift+E',
@@ -77,6 +83,7 @@ const config = new Store<AppConfig>({
 /** Keys that must never be pushed as plaintext (secrets live in safeStorage). */
 const CONFIG_KEYS: Array<keyof AppConfig> = [
   'assistantName',
+  'theme',
   'personality',
   'voiceProvider',
   'openaiModel',
@@ -85,9 +92,12 @@ const CONFIG_KEYS: Array<keyof AppConfig> = [
   'wakeWordEnabled',
   'screenAwareness',
   'memoryEnabled',
+  'semanticMemory',
   'remindersEnabled',
   'proactiveEnabled',
   'explainHotkey',
+  'inputDeviceId',
+  'outputDeviceId',
   'userName',
   'characterCard',
 ];
@@ -126,10 +136,23 @@ async function boot(): Promise<void> {
   supervisor = new DaemonSupervisor({ mode });
   supervisor.on('log', (line: string) => process.stderr.write(`[daemon] ${line}`));
   supervisor.on('crash', (code: number | null) =>
-    process.stderr.write(`[daemon] crashed (code ${code}), restarting\n`),
+    process.stderr.write(`[daemon] crashed (code ${code})\n`),
+  );
+  supervisor.on('backoff', ({ attempt, delayMs }: { attempt: number; delayMs: number }) =>
+    process.stderr.write(`[daemon] restart attempt ${attempt} in ${delayMs}ms\n`),
   );
   supervisor.on('restarted', (conn: DaemonConnection) => {
     connection = conn;
+  });
+  // Crash-loop budget exhausted: stop thrashing and tell the user.
+  supervisor.on('fatal', (err: Error) => {
+    process.stderr.write(`[daemon] fatal: ${err.message}\n`);
+    if (Notification.isSupported()) {
+      new Notification({
+        title: config.get('assistantName') || 'WorkerKing',
+        body: 'The assistant daemon keeps crashing and has stopped. Check the logs.',
+      }).show();
+    }
   });
 
   connection = await supervisor.start();
@@ -180,6 +203,13 @@ async function boot(): Promise<void> {
       if (key === 'hotkey' && typeof value === 'string') registerHotkey(value);
       if (key === 'explainHotkey' && typeof value === 'string') registerExplainHotkey(value);
     },
+    // Right-click on the avatar surfaces the chat window.
+    onOpenChat: () => {
+      if (chat) {
+        chat.show();
+        chat.focus();
+      }
+    },
   });
 
   overlay = createOverlayWindow();
@@ -187,7 +217,7 @@ async function boot(): Promise<void> {
 
   // Forward renderer console output to main stderr so the log runner captures it.
   for (const [label, win] of [['overlay', overlay], ['chat', chat]] as const) {
-    win.webContents.on('console-message', (_e, level, msg) => {
+    win.webContents.on('console-message', (_e, _level, msg) => {
       process.stderr.write(`[renderer:${label}] ${msg}\n`);
     });
   }

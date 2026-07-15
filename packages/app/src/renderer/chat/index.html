@@ -21,12 +21,86 @@
         line-height: 1.35; word-break: break-word;
       }
       .bubble--you { align-self: flex-end; background: #2a6cff; color: #fff; border-bottom-right-radius: 4px; }
-      .bubble--wk { align-self: flex-start; background: rgba(128,128,128,0.18); border-bottom-left-radius: 4px; }
-      #composer { display: flex; gap: 8px; padding: 10px; border-top: 1px solid rgba(128,128,128,0.25); }
+      .bubble--wk { align-self: flex-start; background: rgba(128,128,128,0.18); border-bottom-left-radius: 4px; position: relative; }
+      /* Copy affordances (message + code), revealed on hover */
+      .bubble__actions { position: absolute; top: 4px; right: 6px; opacity: 0; transition: opacity 0.12s; }
+      .bubble--wk:hover .bubble__actions { opacity: 1; }
+      .bubble__copy { background: rgba(128,128,128,0.35); color: inherit; font-size: 12px; padding: 2px 6px; border-radius: 6px; line-height: 1; }
+      .bubble--wk pre.code { position: relative; }
+      .code__copy { position: absolute; top: 5px; right: 5px; background: rgba(128,128,128,0.4); color: inherit;
+        font-size: 11px; padding: 2px 7px; border-radius: 6px; opacity: 0; transition: opacity 0.12s; }
+      .bubble--wk pre.code:hover .code__copy { opacity: 1; }
+      /* Markdown inside assistant bubbles */
+      .bubble--wk p { margin: 0 0 6px; } .bubble--wk p:last-child { margin-bottom: 0; }
+      .bubble--wk ul, .bubble--wk ol { margin: 4px 0; padding-left: 20px; }
+      .bubble--wk code { font-family: ui-monospace, monospace; font-size: 0.92em; background: rgba(128,128,128,0.22); padding: 1px 4px; border-radius: 4px; }
+      .bubble--wk pre.code { background: rgba(0,0,0,0.28); padding: 8px 10px; border-radius: 8px; overflow-x: auto; margin: 6px 0; }
+      .bubble--wk pre.code code { background: none; padding: 0; }
+      .bubble--wk a { color: inherit; text-decoration: underline; }
+      /* Header buttons + task count badge */
+      #tasks-toggle { position: relative; }
+      #tasks-count { display: none; }
+      #tasks-count.has { display: inline-block; min-width: 16px; text-align: center; font-size: 11px; font-weight: 700;
+        background: #2a6cff; color: #fff; border-radius: 9px; padding: 0 5px; margin-left: 4px; }
+      /* Tasks panel (slide-over, mirrors settings) */
+      #tasks-panel { display: none; position: absolute; inset: 0; background: Canvas; overflow-y: auto; padding: 14px 16px; z-index: 5; }
+      #tasks-panel.open { display: block; }
+      #tasks-panel h2 { margin: 4px 0 12px; }
+      #tasks-list:empty::after { content: 'No delegated tasks yet.'; opacity: 0.6; font-size: 13px; }
+      .task { border: 1px solid rgba(128,128,128,0.3); border-radius: 10px; padding: 8px 10px; margin-bottom: 8px; }
+      .task__head { display: flex; align-items: center; gap: 8px; }
+      .task__title { font-size: 13px; word-break: break-word; }
+      .task__detail { font-size: 12px; opacity: 0.8; margin-top: 5px; white-space: pre-wrap; word-break: break-word; }
+      .task__badge { font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; font-weight: 700;
+        padding: 2px 6px; border-radius: 6px; background: rgba(128,128,128,0.25); flex: none; }
+      .task--running .task__badge, .task--queued .task__badge { background: #2a6cff; color: #fff; }
+      .task--done .task__badge { background: #17c964; color: #04210f; }
+      .task--error .task__badge { background: #f5544a; color: #fff; }
+      .task--cancelled .task__badge { background: rgba(128,128,128,0.4); }
+      #tasks-close { margin-top: 8px; background: rgba(128,128,128,0.25); color: inherit; }
+      #composer { display: flex; gap: 8px; padding: 10px; border-top: 1px solid rgba(128,128,128,0.25); position: relative; }
+      /* Command palette (typing "/") */
+      .palette { position: absolute; left: 10px; right: 10px; bottom: calc(100% + 4px); max-height: 240px;
+        overflow-y: auto; background: Canvas; border: 1px solid rgba(128,128,128,0.4); border-radius: 10px;
+        box-shadow: 0 -6px 20px rgba(0,0,0,0.25); z-index: 6; }
+      .palette__item { display: flex; gap: 8px; align-items: baseline; padding: 7px 10px; cursor: pointer; }
+      .palette__item--active, .palette__item:hover { background: rgba(42,108,255,0.18); }
+      .palette__kind { font-size: 10px; text-transform: uppercase; opacity: 0.6; flex: none; min-width: 62px; }
+      .palette__name { font-weight: 600; font-size: 13px; flex: none; }
+      .palette__desc { font-size: 12px; opacity: 0.65; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       #input { flex: 1; padding: 9px 12px; border-radius: 10px; border: 1px solid rgba(128,128,128,0.4); background: Field; color: FieldText; font: inherit; }
       button { padding: 9px 16px; border: none; border-radius: 10px; background: #2a6cff; color: #fff; font: inherit; cursor: pointer; }
       button:hover { filter: brightness(1.08); }
-      #gear { background: transparent; color: inherit; font-size: 16px; padding: 2px 6px; }
+      #gear, #clear, #tasks-toggle, #history-toggle, #watches-toggle { background: transparent; color: inherit; font-size: 16px; padding: 2px 6px; }
+      /* Watches panel (slide-over) */
+      #watches-panel { display: none; position: absolute; inset: 0; background: Canvas; overflow-y: auto; padding: 14px 16px; z-index: 5; }
+      #watches-panel.open { display: block; }
+      #watches-panel h2 { margin: 4px 0 6px; }
+      #watches-panel p.hint { font-size: 12px; opacity: 0.7; margin: 0 0 12px; }
+      #watch-form { display: grid; gap: 6px; margin-bottom: 14px; }
+      #watch-form input { padding: 7px 9px; border-radius: 8px; border: 1px solid rgba(128,128,128,0.4); background: Field; color: FieldText; font: inherit; }
+      .watch { border: 1px solid rgba(128,128,128,0.28); border-radius: 10px; padding: 8px 10px; margin-bottom: 8px; }
+      .watch__head { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+      .watch__cron { font-family: ui-monospace, monospace; font-size: 11px; opacity: 0.7; flex: none; }
+      .watch__prompt { font-size: 12.5px; margin-top: 4px; opacity: 0.85; word-break: break-word; }
+      .watch__badge { font-size: 10px; text-transform: uppercase; font-weight: 700; opacity: 0.55; }
+      .watch__remove { background: rgba(245,84,74,0.85); color: #fff; font-size: 11px; padding: 2px 8px; border-radius: 6px; }
+      #watches-close { margin-top: 8px; background: rgba(128,128,128,0.25); color: inherit; }
+      /* History panel (slide-over) */
+      #history-panel { display: none; position: absolute; inset: 0; background: Canvas; overflow-y: auto; padding: 14px 16px; z-index: 5; }
+      #history-panel.open { display: block; }
+      #history-panel h2 { margin: 4px 0 12px; }
+      #history-new { margin-bottom: 10px; }
+      #history-list:empty::after { content: 'No past conversations yet.'; opacity: 0.6; font-size: 13px; }
+      .conv { display: flex; justify-content: space-between; gap: 10px; align-items: baseline;
+        padding: 9px 10px; border: 1px solid rgba(128,128,128,0.28); border-radius: 10px; margin-bottom: 8px; cursor: pointer; }
+      .conv:hover { background: rgba(128,128,128,0.12); }
+      .conv__title { font-size: 13px; word-break: break-word; }
+      .conv__meta { font-size: 11px; opacity: 0.6; flex: none; }
+      #history-close { margin-top: 8px; background: rgba(128,128,128,0.25); color: inherit; }
+      /* Spoken (voice) turns get a subtle mic marker */
+      .bubble--spoken::after { content: '🎙'; position: absolute; bottom: 2px; right: 6px; font-size: 10px; opacity: 0.45; }
+      .bubble--you.bubble--spoken { position: relative; }
       #settings { display: none; position: absolute; inset: 0; background: Canvas; overflow-y: auto; padding: 14px 16px; z-index: 5; }
       #settings.open { display: block; }
       #settings h2 { margin: 4px 0 12px; }
@@ -49,6 +123,10 @@
       <span>WorkerKing</span>
       <span class="row" style="display:flex;gap:10px;align-items:center">
         <span id="status">connecting…</span>
+        <button id="history-toggle" title="History">🕘</button>
+        <button id="watches-toggle" title="Proactive watches">⏰</button>
+        <button id="tasks-toggle" title="Tasks">📋<span id="tasks-count"></span></button>
+        <button id="clear" title="Clear conversation">🗑</button>
         <button id="gear" title="Settings">⚙</button>
       </span>
     </header>
@@ -57,6 +135,28 @@
       <input id="input" type="text" placeholder="Ask WorkerKing…" autocomplete="off" autofocus />
       <button type="submit">Send</button>
     </form>
+    <section id="watches-panel">
+      <h2>Proactive watches</h2>
+      <p class="hint">Scheduled prompts WorkerKing runs to decide if it should speak up (needs proactive mode on).</p>
+      <form id="watch-form">
+        <input id="watch-prompt" type="text" placeholder="What to check (e.g. remind me of unread urgent email)" />
+        <input id="watch-cron" type="text" placeholder="Cron, e.g. */15 * * * *" value="*/15 * * * *" />
+        <button type="submit">Add watch</button>
+      </form>
+      <div id="watches-list"></div>
+      <button id="watches-close">Close</button>
+    </section>
+    <section id="history-panel">
+      <h2>History</h2>
+      <button id="history-new">+ New chat</button>
+      <div id="history-list"></div>
+      <button id="history-close">Close</button>
+    </section>
+    <section id="tasks-panel">
+      <h2>Tasks</h2>
+      <div id="tasks-list"></div>
+      <button id="tasks-close">Close</button>
+    </section>
     <section id="settings">
       <div id="settings-body"></div>
       <button id="settings-close">Close</button>
