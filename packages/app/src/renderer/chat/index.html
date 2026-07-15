@@ -62,7 +62,19 @@
       #input { flex: 1; padding: 9px 12px; border-radius: 10px; border: 1px solid rgba(128,128,128,0.4); background: Field; color: FieldText; font: inherit; }
       button { padding: 9px 16px; border: none; border-radius: 10px; background: #2a6cff; color: #fff; font: inherit; cursor: pointer; }
       button:hover { filter: brightness(1.08); }
-      #gear, #clear, #tasks-toggle { background: transparent; color: inherit; font-size: 16px; padding: 2px 6px; }
+      #gear, #clear, #tasks-toggle, #history-toggle { background: transparent; color: inherit; font-size: 16px; padding: 2px 6px; }
+      /* History panel (slide-over) */
+      #history-panel { display: none; position: absolute; inset: 0; background: Canvas; overflow-y: auto; padding: 14px 16px; z-index: 5; }
+      #history-panel.open { display: block; }
+      #history-panel h2 { margin: 4px 0 12px; }
+      #history-new { margin-bottom: 10px; }
+      #history-list:empty::after { content: 'No past conversations yet.'; opacity: 0.6; font-size: 13px; }
+      .conv { display: flex; justify-content: space-between; gap: 10px; align-items: baseline;
+        padding: 9px 10px; border: 1px solid rgba(128,128,128,0.28); border-radius: 10px; margin-bottom: 8px; cursor: pointer; }
+      .conv:hover { background: rgba(128,128,128,0.12); }
+      .conv__title { font-size: 13px; word-break: break-word; }
+      .conv__meta { font-size: 11px; opacity: 0.6; flex: none; }
+      #history-close { margin-top: 8px; background: rgba(128,128,128,0.25); color: inherit; }
       /* Spoken (voice) turns get a subtle mic marker */
       .bubble--spoken::after { content: '🎙'; position: absolute; bottom: 2px; right: 6px; font-size: 10px; opacity: 0.45; }
       .bubble--you.bubble--spoken { position: relative; }
@@ -88,6 +100,7 @@
       <span>WorkerKing</span>
       <span class="row" style="display:flex;gap:10px;align-items:center">
         <span id="status">connecting…</span>
+        <button id="history-toggle" title="History">🕘</button>
         <button id="tasks-toggle" title="Tasks">📋<span id="tasks-count"></span></button>
         <button id="clear" title="Clear conversation">🗑</button>
         <button id="gear" title="Settings">⚙</button>
@@ -98,6 +111,12 @@
       <input id="input" type="text" placeholder="Ask WorkerKing…" autocomplete="off" autofocus />
       <button type="submit">Send</button>
     </form>
+    <section id="history-panel">
+      <h2>History</h2>
+      <button id="history-new">+ New chat</button>
+      <div id="history-list"></div>
+      <button id="history-close">Close</button>
+    </section>
     <section id="tasks-panel">
       <h2>Tasks</h2>
       <div id="tasks-list"></div>

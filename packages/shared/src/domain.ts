@@ -177,3 +177,24 @@ export const avatarStateSchema = z.enum([
   'alert',
 ]);
 export type AvatarState = z.infer<typeof avatarStateSchema>;
+
+// ---------------------------------------------------------------------------
+// Conversation history — durable, browsable past chats.
+// ---------------------------------------------------------------------------
+
+export const conversationMessageSchema = z.object({
+  role: z.enum(['user', 'assistant']),
+  text: z.string(),
+  ts: z.number(),
+});
+export type ConversationMessage = z.infer<typeof conversationMessageSchema>;
+
+/** Lightweight metadata for a conversation list (no message bodies). */
+export const conversationSummarySchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  createdAt: z.number(),
+  updatedAt: z.number(),
+  messageCount: z.number(),
+});
+export type ConversationSummary = z.infer<typeof conversationSummarySchema>;

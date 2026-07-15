@@ -4,6 +4,8 @@ import {
   taskProgressSchema,
   capabilityManifestSchema,
   avatarStateSchema,
+  conversationMessageSchema,
+  conversationSummarySchema,
 } from './domain.js';
 
 /**
@@ -112,6 +114,19 @@ const proactiveNotifyPayload = z.object({
 
 const taskCreatedPayload = z.object({ task: taskSchema });
 const taskUpdatedPayload = z.object({ task: taskSchema });
+
+// Conversation history (renderer request -> daemon result, keyed by kind).
+const historyListPayload = z.object({});
+const historyListResultPayload = z.object({
+  conversations: z.array(conversationSummarySchema),
+});
+const historyLoadPayload = z.object({ conversationId: z.string() });
+const historyLoadResultPayload = z.object({
+  conversationId: z.string(),
+  messages: z.array(conversationMessageSchema),
+});
+const historyNewPayload = z.object({});
+const historyNewResultPayload = z.object({ conversationId: z.string() });
 const taskProgressPayload = z.object({
   taskId: z.string(),
   progress: taskProgressSchema,
@@ -190,6 +205,13 @@ export const payloadSchemas = {
   'avatar.state': avatarStatePayload,
 
   'capability.updated': capabilityUpdatedPayload,
+
+  'history.list': historyListPayload,
+  'history.list_result': historyListResultPayload,
+  'history.load': historyLoadPayload,
+  'history.load_result': historyLoadResultPayload,
+  'history.new': historyNewPayload,
+  'history.new_result': historyNewResultPayload,
 
   'config.get': configGetPayload,
   'config.set': configSetPayload,

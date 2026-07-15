@@ -259,6 +259,53 @@ async function main(): Promise<void> {
 
   document.getElementById('clear')?.addEventListener('click', clearConversation);
 
+  // --- Conversation history (server-side) ---------------------------------
+  const historyPanel = document.getElementById('history-panel');
+  const historyList = document.getElementById('history-list');
+  const openHistory = () => {
+    historyPanel?.classList.toggle('open');
+    if (historyPanel?.classList.contains('open')) client.send('history.list', {});
+  };
+  document.getElementById('history-toggle')?.addEventListener('click', openHistory);
+  document.getElementById('history-close')?.addEventListener('click', () => historyPanel?.classList.remove('open'));
+  document.getElementById('history-new')?.addEventListener('click', () => {
+    client.send('history.new', {});
+    clearConversation();
+    historyPanel?.classList.remove('open');
+  });
+
+  client.on('history.list_result', (env) => {
+    if (!historyList) return;
+    historyList.innerHTML = '';
+    for (const c of env.payload.conversations) {
+      const row = document.createElement('div');
+      row.className = 'conv';
+      const title = document.createElement('span');
+      title.className = 'conv__title';
+      title.textContent = c.title;
+      const meta = document.createElement('span');
+      meta.className = 'conv__meta';
+      meta.textContent = `${c.messageCount} msg`;
+      row.append(title, meta);
+      row.addEventListener('click', () => client.send('history.load', { conversationId: c.id }));
+      historyList.appendChild(row);
+    }
+  });
+
+  client.on('history.load_result', (env) => {
+    // Replace the log + local transcript with the loaded conversation.
+    log.innerHTML = '';
+    transcript.length = 0;
+    for (const m of env.payload.messages) {
+      const who = m.role === 'user' ? 'you' : 'wk';
+      addMessage(who, m.text);
+      transcript.push({ who, text: m.text });
+    }
+    saveTranscript(transcript);
+    log.scrollTop = log.scrollHeight;
+    historyPanel?.classList.remove('open');
+  });
+
   client.on('error', (env) => {
     status.textContent = `error: ${env.payload.message}`;
   });

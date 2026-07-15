@@ -14,6 +14,7 @@ import { assemblePersonaFromCard, parseCharacterCard } from './persona/Character
 import { MemoryStore } from './memory/MemoryStore.js';
 import { createMemoryIndex } from './memory/MemoryIndex.js';
 import { InteractionLog } from './memory/InteractionLog.js';
+import { ConversationStore } from './history/ConversationStore.js';
 import { NightlyJob, createClaudeDistiller } from './memory/NightlyJob.js';
 import { ReminderStore } from './proactive/ReminderStore.js';
 import { ReminderScheduler } from './proactive/ReminderScheduler.js';
@@ -28,6 +29,7 @@ const log = createLogger({ scope: 'workerking' });
 // Process-wide memory store + interaction log (file-based under ~/.claude/workerking).
 const memory = new MemoryStore();
 const interactionLog = new InteractionLog();
+const conversations = new ConversationStore();
 const reminderStore = new ReminderStore();
 
 /** The Voyager-pattern nudge: encourage Claude to grow its own skills. */
@@ -256,7 +258,7 @@ export async function startDaemon(opts: StartDaemonOptions = {}): Promise<Runnin
       () => {},
     );
   }
-  new Supervisor(server, config, brain, interactionLog);
+  new Supervisor(server, config, brain, interactionLog, conversations);
 
   const requestedPort =
     opts.port ?? (process.env.WORKERKING_PORT ? Number(process.env.WORKERKING_PORT) : 0);

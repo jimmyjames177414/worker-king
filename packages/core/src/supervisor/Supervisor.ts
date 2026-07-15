@@ -5,6 +5,7 @@ import type { Brain } from '../brain/Brain.js';
 import { TaskManager } from '../tasks/TaskManager.js';
 import { daemonEnvelopeContext } from '../util/ids.js';
 import type { InteractionLog } from '../memory/InteractionLog.js';
+import type { ConversationStore } from '../history/ConversationStore.js';
 
 /**
  * Supervisor — the daemon's message router.
@@ -24,6 +25,7 @@ export class Supervisor {
     private readonly config: ConfigStore,
     private readonly brain: Brain,
     private readonly log?: InteractionLog,
+    private readonly history?: ConversationStore,
   ) {
     // TaskManager drives delegated (voice) work; its events become task.* broadcasts.
     this.tasks = new TaskManager({
@@ -64,6 +66,12 @@ export class Supervisor {
         return this.handleConfigGet(client, env as WsEnvelope<'config.get'>);
       case 'config.set':
         return this.handleConfigSet(env as WsEnvelope<'config.set'>);
+      case 'history.list':
+        return this.handleHistoryList(client);
+      case 'history.load':
+        return this.handleHistoryLoad(client, env as WsEnvelope<'history.load'>);
+      case 'history.new':
+        return this.handleHistoryNew(client);
       default:
         // Not handled in this phase.
         return;
@@ -110,11 +118,13 @@ export class Supervisor {
     env: WsEnvelope<'chat.user_message'>,
   ): Promise<void> {
     const { text, messageId } = env.payload;
+    this.history?.append('user', text);
     try {
       const full = await this.brain.respond(text, (delta) => {
         client.send('chat.assistant_delta', { messageId, delta });
       });
       client.send('chat.assistant_done', { messageId, text: full });
+      this.history?.append('assistant', full);
       this.log?.append('chat', `user: ${text} | assistant: ${full.slice(0, 200)}`);
     } catch (err) {
       client.send('error', {
@@ -142,5 +152,23 @@ export class Supervisor {
   private handleConfigSet(env: WsEnvelope<'config.set'>): void {
     const { key, value } = env.payload;
     this.config.set(key, value); // triggers config.changed broadcast via onChange
+  }
+
+  private handleHistoryList(client: WsClient): void {
+    client.send('history.list_result', { conversations: this.history?.list() ?? [] });
+  }
+
+  private handleHistoryLoad(client: WsClient, env: WsEnvelope<'history.load'>): void {
+    const { conversationId } = env.payload;
+    this.history?.setCurrent(conversationId); // resume: new turns append here
+    client.send('history.load_result', {
+      conversationId,
+      messages: this.history?.load(conversationId) ?? [],
+    });
+  }
+
+  private handleHistoryNew(client: WsClient): void {
+    const conversationId = this.history?.startNew() ?? '';
+    client.send('history.new_result', { conversationId });
   }
 }
