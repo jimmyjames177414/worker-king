@@ -33,6 +33,8 @@ export interface WorkerKingConfig {
   screenAwareness: boolean;
   /** Persist durable facts/preferences across sessions; on by default. */
   memoryEnabled: boolean;
+  /** Use local-embedding semantic recall (falls back to keyword if unavailable); off by default. */
+  semanticMemory: boolean;
   /** Allow scheduled reminders; on by default. */
   remindersEnabled: boolean;
   /** Run scheduled proactive "watch" checks (spends Claude quota); off by default. */
@@ -58,6 +60,7 @@ export const DEFAULT_CONFIG: WorkerKingConfig = {
   wakeWordEnabled: false,
   screenAwareness: false,
   memoryEnabled: true,
+  semanticMemory: false,
   remindersEnabled: true,
   proactiveEnabled: false,
   explainHotkey: 'Control+Shift+E',

@@ -57,6 +57,7 @@ export class Settings {
       <label class="check"><input type="checkbox" data-cfg="wakeWordEnabled" ${checked('wakeWordEnabled')}> Always-listening wake word</label>
       <label class="check"><input type="checkbox" data-cfg="screenAwareness" ${checked('screenAwareness')}> Let it see my screen</label>
       <label class="check"><input type="checkbox" data-cfg="memoryEnabled" ${checked('memoryEnabled')}> Remember things about me across sessions</label>
+      <label class="check"><input type="checkbox" data-cfg="semanticMemory" ${checked('semanticMemory')}> Smarter memory search (local embeddings)</label>
       <label class="check"><input type="checkbox" data-cfg="remindersEnabled" ${checked('remindersEnabled')}> Allow reminders</label>
       <label class="check"><input type="checkbox" data-cfg="proactiveEnabled" ${checked('proactiveEnabled')}> Proactive heads-ups (calendar etc.)</label>
       <hr>

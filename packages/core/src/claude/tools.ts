@@ -4,7 +4,7 @@ import { z } from 'zod';
 import type { ConfigStore } from '../config/ConfigStore.js';
 import type { ScreenContextProvider } from '../screen/ScreenContextProvider.js';
 import type { MemoryStore, MemoryScope } from '../memory/MemoryStore.js';
-import { KeywordMemoryIndex } from '../memory/MemoryIndex.js';
+import { KeywordMemoryIndex, type MemoryIndex } from '../memory/MemoryIndex.js';
 import type { MemoryEntry } from '../memory/MemoryStore.js';
 
 /**
@@ -34,6 +34,8 @@ export interface WorkerKingToolDeps {
   screen: ScreenContextProvider;
   /** Optional memory store; enables the `remember` tool when present. */
   memory?: MemoryStore;
+  /** Optional retrieval index for recall/list_memories; defaults to keyword over `memory`. */
+  memoryIndex?: MemoryIndex;
   /** Surface a proactive heads-up (toast + optional speech); enables `notify`. */
   proactiveNotify?: (notice: ProactiveNotice) => void;
   /** Schedule a reminder, returning its id; enables `set_reminder`. */
@@ -180,8 +182,8 @@ export function buildRecallTool(deps: WorkerKingToolDeps) {
     async (args) => {
       deps.audit?.({ tool: 'recall', detail: `query=${args.query}` });
       if (!enabled()) return memoryDisabledResult();
-      const index = new KeywordMemoryIndex(deps.memory!);
-      const hits = index.search(args.query, { scope: args.scope as MemoryScope | undefined, limit: args.limit });
+      const index = deps.memoryIndex ?? new KeywordMemoryIndex(deps.memory!);
+      const hits = await index.search(args.query, { scope: args.scope as MemoryScope | undefined, limit: args.limit });
       if (!hits.length) {
         return { content: [{ type: 'text' as const, text: `No memories match "${args.query}".` }] };
       }
@@ -213,8 +215,8 @@ export function buildListMemoriesTool(deps: WorkerKingToolDeps) {
     async (args) => {
       deps.audit?.({ tool: 'list_memories', detail: args.scope ? `scope=${args.scope}` : 'all' });
       if (!enabled()) return memoryDisabledResult();
-      const index = new KeywordMemoryIndex(deps.memory!);
-      const entries = index.list({ scope: args.scope as MemoryScope | undefined });
+      const index = deps.memoryIndex ?? new KeywordMemoryIndex(deps.memory!);
+      const entries = await index.list({ scope: args.scope as MemoryScope | undefined });
       if (!entries.length) {
         return { content: [{ type: 'text' as const, text: 'You have no memories stored yet.' }] };
       }

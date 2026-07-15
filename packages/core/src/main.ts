@@ -12,6 +12,7 @@ import { realCapabilityQueryFn } from './capability/realCapabilityQuery.js';
 import { assemblePersonaAppend } from './persona/assemblePersona.js';
 import { assemblePersonaFromCard, parseCharacterCard } from './persona/CharacterCard.js';
 import { MemoryStore } from './memory/MemoryStore.js';
+import { createMemoryIndex } from './memory/MemoryIndex.js';
 import { InteractionLog } from './memory/InteractionLog.js';
 import { NightlyJob, createClaudeDistiller } from './memory/NightlyJob.js';
 import { ReminderStore } from './proactive/ReminderStore.js';
@@ -141,11 +142,18 @@ async function resolveBrain(
     return id;
   };
 
+  // Retrieval backend for recall/list_memories: semantic if enabled + model present,
+  // else keyword. Built once (embedding-model init is expensive); reads the store live.
+  const memoryIndex = await createMemoryIndex(memory, {
+    semantic: config.get('semanticMemory') === true,
+  });
+
   // Screen-awareness + memory + proactive tools (capture runs in Electron main).
   const toolServer = createWorkerKingToolServer({
     config,
     screen: new WsScreenContextProvider(server),
     memory,
+    memoryIndex,
     proactiveNotify,
     scheduleReminder,
     audit: (e) => process.stderr.write(`[workerking][tool] ${e.tool}: ${e.detail}\n`),

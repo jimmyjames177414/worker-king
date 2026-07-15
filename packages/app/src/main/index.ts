@@ -47,6 +47,7 @@ interface AppConfig {
   wakeWordEnabled: boolean;
   screenAwareness: boolean;
   memoryEnabled: boolean;
+  semanticMemory: boolean;
   remindersEnabled: boolean;
   proactiveEnabled: boolean;
   explainHotkey: string;
@@ -68,6 +69,7 @@ const config = new Store<AppConfig>({
     wakeWordEnabled: false,
     screenAwareness: false,
     memoryEnabled: true,
+    semanticMemory: false,
     remindersEnabled: true,
     proactiveEnabled: false,
     explainHotkey: 'Control+Shift+E',
@@ -85,6 +87,7 @@ const CONFIG_KEYS: Array<keyof AppConfig> = [
   'wakeWordEnabled',
   'screenAwareness',
   'memoryEnabled',
+  'semanticMemory',
   'remindersEnabled',
   'proactiveEnabled',
   'explainHotkey',
