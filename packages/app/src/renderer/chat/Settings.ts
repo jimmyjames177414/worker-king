@@ -22,13 +22,31 @@ export class Settings {
   async render(): Promise<void> {
     const cfg = await this.bridge.getConfig();
     const hasKey = await this.bridge.hasSecret('openai');
-    this.el.innerHTML = this.template(cfg, hasKey);
+    const devices = await this.enumerateDevices();
+    this.el.innerHTML = this.template(cfg, hasKey, devices);
     this.wire();
   }
 
-  private template(cfg: Record<string, unknown>, hasKey: boolean): string {
+  private async enumerateDevices(): Promise<MediaDeviceInfo[]> {
+    try {
+      return await navigator.mediaDevices.enumerateDevices();
+    } catch {
+      return [];
+    }
+  }
+
+  private template(cfg: Record<string, unknown>, hasKey: boolean, devices: MediaDeviceInfo[]): string {
     const str = (k: string) => escapeHtml(String(cfg[k] ?? ''));
     const checked = (k: string) => (cfg[k] === true ? 'checked' : '');
+    const deviceOpts = (kind: MediaDeviceKind, selected: unknown) => {
+      const opts = devices
+        .filter((d) => d.kind === kind)
+        .map(
+          (d) =>
+            `<option value="${escapeHtml(d.deviceId)}" ${selected === d.deviceId ? 'selected' : ''}>${escapeHtml(d.label || d.deviceId || 'device')}</option>`,
+        );
+      return `<option value="" ${selected ? '' : 'selected'}>System default</option>${opts.join('')}`;
+    };
     const modelOpts = ['gpt-realtime-mini', 'gpt-realtime']
       .map((m) => `<option value="${m}" ${cfg.openaiModel === m ? 'selected' : ''}>${m}</option>`)
       .join('');
@@ -51,6 +69,8 @@ export class Settings {
       <label>Personality<textarea data-cfg="personality" rows="3">${str('personality')}</textarea></label>
       <label>Voice engine<select data-cfg="voiceProvider">${providerOpts}</select></label>
       <label>Voice model<select data-cfg="openaiModel">${modelOpts}</select></label>
+      <label>Microphone<select data-cfg="inputDeviceId">${deviceOpts('audioinput', cfg.inputDeviceId)}</select></label>
+      <label>Speaker<select data-cfg="outputDeviceId">${deviceOpts('audiooutput', cfg.outputDeviceId)}</select></label>
       <label>Claude host<select data-cfg="claudeHost">${hostOpts}</select></label>
       <label>Push-to-talk hotkey<input data-cfg="hotkey" value="${str('hotkey')}"></label>
       <label>"Explain selection" hotkey<input data-cfg="explainHotkey" value="${str('explainHotkey')}"></label>

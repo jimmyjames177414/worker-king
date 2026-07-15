@@ -3,6 +3,7 @@ import { AvatarController } from './AvatarController.js';
 import { Captions } from './Captions.js';
 import { VoiceHost } from './VoiceHost.js';
 import { WakeWordController, createWakeWordDetector } from './WakeWord.js';
+import { applyOutputDeviceToDom } from '../shared/audioDevices.js';
 
 /**
  * Overlay renderer entry. Wires:
@@ -43,6 +44,11 @@ async function main(): Promise<VoiceHost | undefined> {
   client.on('avatar.state', (env) => avatar.set(env.payload.state));
   client.on('welcome', () => avatar.set('idle'));
 
+  // Preferred audio devices (system default until config arrives).
+  let inputDeviceId: string | undefined;
+  let outputDeviceId: string | undefined;
+  const asStr = (v: unknown) => (typeof v === 'string' && v ? v : undefined);
+
   // Heal the WS link after system resume (WSL localhost forwarding can drop).
   bridge.onReconnect(() => client.reconnect());
 
@@ -56,6 +62,9 @@ async function main(): Promise<VoiceHost | undefined> {
       error: 'alert',
     };
     avatar.set(map[env.payload.state] ?? 'idle');
+    // The voice layer injects its <audio> when a session starts; route it to the
+    // chosen output device once it exists.
+    if (env.payload.state !== 'idle') void applyOutputDeviceToDom(outputDeviceId, document);
   });
 
   // Live captions from voice transcripts (2.1).
@@ -97,12 +106,25 @@ async function main(): Promise<VoiceHost | undefined> {
   // real openWakeWord model if installed, else a safe no-op (see WakeWord.ts).
   const wake = new WakeWordController(await createWakeWordDetector(), () => void voiceHost.toggle());
   const applyWakeConfig = (enabled: unknown) => {
-    if (enabled === true) void wake.enable().catch((e) => console.error('[wake] enable failed', e));
+    if (enabled === true) void wake.enable(inputDeviceId).catch((e) => console.error('[wake] enable failed', e));
     else wake.disable();
   };
   client.on('config.changed', (env) => {
     if (env.payload.key === 'wakeWordEnabled') applyWakeConfig(env.payload.value);
+    if (env.payload.key === 'inputDeviceId') {
+      inputDeviceId = asStr(env.payload.value);
+      if (wake.isEnabled()) {
+        wake.disable();
+        void wake.enable(inputDeviceId).catch((e) => console.error('[wake] re-enable failed', e));
+      }
+    }
+    if (env.payload.key === 'outputDeviceId') {
+      outputDeviceId = asStr(env.payload.value);
+      void applyOutputDeviceToDom(outputDeviceId, document);
+    }
   });
+  client.send('config.get', { key: 'inputDeviceId' });
+  client.send('config.get', { key: 'outputDeviceId' });
   client.send('config.get', { key: 'wakeWordEnabled' });
 
   // Proactive notices (reminders, watch heads-ups, notify tool): show a caption

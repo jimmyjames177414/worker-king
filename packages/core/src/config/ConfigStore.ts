@@ -41,6 +41,10 @@ export interface WorkerKingConfig {
   proactiveEnabled: boolean;
   /** Global hotkey to explain/act on the current clipboard selection. */
   explainHotkey: string;
+  /** Preferred microphone deviceId (empty/undefined = system default). */
+  inputDeviceId?: string;
+  /** Preferred audio-output deviceId (empty/undefined = system default). */
+  outputDeviceId?: string;
   /** The user's display name, for {{user}} in character cards. */
   userName?: string;
   /** Active SillyTavern chara_card_v2 (object), if the user imported one. */

@@ -51,6 +51,8 @@ interface AppConfig {
   remindersEnabled: boolean;
   proactiveEnabled: boolean;
   explainHotkey: string;
+  inputDeviceId?: string;
+  outputDeviceId?: string;
   userName?: string;
   characterCard?: unknown;
   [k: string]: unknown;
@@ -91,6 +93,8 @@ const CONFIG_KEYS: Array<keyof AppConfig> = [
   'remindersEnabled',
   'proactiveEnabled',
   'explainHotkey',
+  'inputDeviceId',
+  'outputDeviceId',
   'userName',
   'characterCard',
 ];
