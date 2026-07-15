@@ -18,6 +18,8 @@ const api = {
   getConnection: (): Promise<WorkerKingConnection | undefined> =>
     ipcRenderer.invoke('wk:get-connection'),
   setClickThrough: (on: boolean): void => ipcRenderer.send('wk:set-click-through', on),
+  /** Open (show + focus) the chat window — e.g. right-click on the avatar. */
+  openChat: (): void => ipcRenderer.send('wk:open-chat'),
   /** Mint an ephemeral OpenAI Realtime key (real key stays in main). */
   mintRealtimeKey: (): Promise<string> => ipcRenderer.invoke('wk:mint-realtime-key'),
   /** Subscribe to the global push-to-talk hotkey (fired from main). */

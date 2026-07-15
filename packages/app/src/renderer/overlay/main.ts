@@ -9,14 +9,13 @@ import { applyTheme, normalizeThemePref } from '../shared/theme.js';
 /**
  * Overlay renderer entry. Wires:
  *  - the avatar element to the AvatarController (driven by avatar.state broadcasts)
- *  - hover over the avatar to click-through toggling (so it's draggable/clickable
- *    only over the sprite, click-through everywhere else)
- *  - a click on the avatar to open the chat window (Phase 0 uses config path; here
- *    we just surface a custom event other phases hook)
+ *  - left-click on the avatar to toggle the voice session
+ *  - right-click on the avatar to open the chat window
  */
 const bridge = (window as unknown as {
   workerking: {
     setClickThrough(on: boolean): void;
+    openChat(): void;
     mintRealtimeKey(): Promise<string>;
     onPushToTalk(cb: () => void): void;
     onReconnect(cb: () => void): void;
@@ -96,10 +95,14 @@ async function main(): Promise<VoiceHost | undefined> {
     return capabilitySummary ? `${base}\n\n${capabilitySummary}` : base;
   });
 
-  // Click on the avatar toggles voice (hotkey is wired inside VoiceHost constructor).
+  // Left-click toggles voice (hotkey is wired inside VoiceHost); right-click opens chat.
   avatarEl.addEventListener('click', () => {
     console.log('[workerking] avatar clicked');
     void voiceHost.toggle();
+  });
+  avatarEl.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    bridge.openChat();
   });
 
   // Wake word (2.3, opt-in): when enabled in config, "Hey <name>" triggers the

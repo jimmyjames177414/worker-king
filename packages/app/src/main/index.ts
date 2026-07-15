@@ -203,6 +203,13 @@ async function boot(): Promise<void> {
       if (key === 'hotkey' && typeof value === 'string') registerHotkey(value);
       if (key === 'explainHotkey' && typeof value === 'string') registerExplainHotkey(value);
     },
+    // Right-click on the avatar surfaces the chat window.
+    onOpenChat: () => {
+      if (chat) {
+        chat.show();
+        chat.focus();
+      }
+    },
   });
 
   overlay = createOverlayWindow();

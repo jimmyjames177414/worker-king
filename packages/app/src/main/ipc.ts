@@ -21,6 +21,8 @@ export interface IpcDeps {
   getConfig: () => Record<string, unknown>;
   /** Persist a config change + forward it to the daemon. */
   setConfig: (key: string, value: unknown) => void;
+  /** Show + focus the chat window (e.g. right-click on the avatar). */
+  onOpenChat: () => void;
 }
 
 export function registerIpc(deps: IpcDeps): void {
@@ -55,4 +57,6 @@ export function registerIpc(deps: IpcDeps): void {
     setSecret(key, value);
   });
   ipcMain.handle('wk:has-secret', (_e, key: string) => hasSecret(key));
+
+  ipcMain.on('wk:open-chat', () => deps.onOpenChat());
 }
