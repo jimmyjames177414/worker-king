@@ -1,5 +1,6 @@
 import type { Task, TaskProgress } from '@workerking/shared';
 import { ProgressMapper } from './ProgressMapper.js';
+import type { TaskStore } from './TaskStore.js';
 
 /**
  * TaskManager — the async delegation engine behind the chat-supervisor pattern.
@@ -47,6 +48,8 @@ export interface TaskManagerDeps {
   throttleMs?: number;
   /** Max tasks running at once; the rest wait in `queued`. Default 3. */
   maxConcurrent?: number;
+  /** Durable record of tasks (N12); when set, snapshots survive restart. */
+  store?: TaskStore;
 }
 
 export class TaskManager {
@@ -86,6 +89,7 @@ export class TaskManager {
       this.deps.emit.created(task); // state: 'queued'
       this.queue.push(id);
     }
+    this.deps.store?.upsert(task);
     return id;
   }
 
@@ -98,6 +102,7 @@ export class TaskManager {
       running.task.state = 'running';
       this.runningCount++;
       this.deps.emit.updated(running.task); // queued → running
+      this.deps.store?.upsert(running.task);
       void this.run(running);
     }
   }
@@ -150,15 +155,16 @@ export class TaskManager {
         this.deps.emit.error(task.id, task.error);
       }
     } finally {
+      this.deps.store?.upsert(task); // persist the terminal state before eviction
       this.tasks.delete(task.id);
       this.runningCount--;
       this.pump(); // a slot freed — start the next queued task
     }
   }
 
-  /** Snapshot for check_task_status. */
+  /** Snapshot for check_task_status; falls back to the durable store for finished tasks. */
   check(taskId: string): Task | undefined {
-    return this.tasks.get(taskId)?.task;
+    return this.tasks.get(taskId)?.task ?? this.deps.store?.get(taskId);
   }
 
   /** Cancel a running or queued task; returns true if it was found. */
@@ -170,6 +176,7 @@ export class TaskManager {
       const i = this.queue.indexOf(taskId);
       if (i >= 0) this.queue.splice(i, 1);
       running.task.state = 'cancelled';
+      this.deps.store?.upsert(running.task);
       this.tasks.delete(taskId);
       this.deps.emit.cancelled(taskId);
       return true;

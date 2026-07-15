@@ -3,6 +3,7 @@ import type { WsEnvelope } from '@workerking/shared';
 import type { ConfigStore } from '../config/ConfigStore.js';
 import type { Brain } from '../brain/Brain.js';
 import { TaskManager } from '../tasks/TaskManager.js';
+import type { TaskStore } from '../tasks/TaskStore.js';
 import { daemonEnvelopeContext } from '../util/ids.js';
 import type { InteractionLog } from '../memory/InteractionLog.js';
 import type { ConversationStore } from '../history/ConversationStore.js';
@@ -40,6 +41,8 @@ export class Supervisor {
     private readonly watches?: WatchDeps,
     /** Structured logger for per-turn tracing (N8). */
     private readonly logger?: Logger,
+    /** Durable task record (N12); survives restarts and outlives eviction. */
+    taskStore?: TaskStore,
   ) {
     // TaskManager drives delegated (voice) work; its events become task.* broadcasts.
     this.tasks = new TaskManager({
@@ -57,6 +60,7 @@ export class Supervisor {
       },
       now: daemonEnvelopeContext.now,
       newId: daemonEnvelopeContext.newId,
+      store: taskStore,
     });
 
     this.server.onMessage((client, env) => {
