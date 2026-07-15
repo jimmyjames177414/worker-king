@@ -31,7 +31,7 @@ function els(): Els {
 // --- Transcript persistence -------------------------------------------------
 const TRANSCRIPT_KEY = 'workerking.transcript.v1';
 const MAX_PERSISTED = 200;
-type Msg = { who: 'you' | 'wk'; text: string };
+type Msg = { who: 'you' | 'wk'; text: string; spoken?: boolean };
 
 function loadTranscript(): Msg[] {
   try {
@@ -148,11 +148,24 @@ async function main(): Promise<void> {
   const taskList = new TaskList(tasksList, tasksCount);
 
   // Restore prior transcript so history survives an app restart.
-  for (const m of transcript) renderInto(appendBubble(log, m.who), m.who, m.text);
+  for (const m of transcript) addMessage(m.who, m.text, m.spoken);
   log.scrollTop = log.scrollHeight;
 
-  const record = (who: 'you' | 'wk', text: string) => {
-    transcript.push({ who, text });
+  function addMessage(who: 'you' | 'wk', text: string, spoken = false): HTMLElement {
+    const row = appendBubble(log, who);
+    if (spoken) row.classList.add('bubble--spoken');
+    renderInto(row, who, text);
+    return row;
+  }
+
+  const record = (who: 'you' | 'wk', text: string, spoken = false) => {
+    transcript.push({ who, text, spoken });
+    saveTranscript(transcript);
+  };
+
+  const clearConversation = () => {
+    log.innerHTML = '';
+    transcript.length = 0;
     saveTranscript(transcript);
   };
 
@@ -222,6 +235,18 @@ async function main(): Promise<void> {
   client.on('task.cancelled', (env) => {
     taskList.upsert({ id: env.payload.taskId, prompt: '', state: 'cancelled' });
   });
+
+  // Spoken turns from the voice layer appear in the chat log too (final only, to
+  // avoid partial-transcript churn), marked as spoken and persisted like typed ones.
+  client.on('voice.transcript', (env) => {
+    if (!env.payload.final) return;
+    const who = env.payload.role === 'user' ? 'you' : 'wk';
+    addMessage(who, env.payload.text, true);
+    record(who, env.payload.text, true);
+    log.scrollTop = log.scrollHeight;
+  });
+
+  document.getElementById('clear')?.addEventListener('click', clearConversation);
 
   client.on('error', (env) => {
     status.textContent = `error: ${env.payload.message}`;
