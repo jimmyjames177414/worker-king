@@ -29,13 +29,16 @@ describe('screen-awareness tools', () => {
     expect(r2.isError).toBe(true);
   });
 
-  it('returns the active window title when enabled', async () => {
+  it('returns the active window title when enabled, fenced as untrusted (N5)', async () => {
     const config = new ConfigStore({ screenAwareness: true });
     const { getActiveWindow } = buildScreenTools({ config, screen: canned });
 
     const r = await getActiveWindow.handler({}, undefined);
     expect(r.isError).toBeUndefined();
-    expect(textOf(r)).toContain('budget.xlsx — Excel');
+    const text = textOf(r);
+    expect(text).toContain('budget.xlsx — Excel');
+    // Screen-derived content is wrapped so the model treats it as data, not commands.
+    expect(text).toContain('untrusted-external-data');
   });
 
   it('returns an image content block from capture_screen when enabled', async () => {

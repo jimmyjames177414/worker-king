@@ -6,6 +6,9 @@ import { Supervisor } from './supervisor/Supervisor.js';
 import { EchoBrain, DeferredBrain, type Brain } from './brain/Brain.js';
 import { createClaudeBackend, probeClaude } from './claude/createClaudeBackend.js';
 import { createWorkerKingToolServer, WORKERKING_TOOL_ALLOWLIST } from './claude/tools.js';
+import { createToolPolicy, summarizeToolCall } from './claude/toolPolicy.js';
+import { WsToolConfirmer } from './claude/WsToolConfirmer.js';
+import type { ToolPermissionMode } from '@workerking/shared';
 import { WsScreenContextProvider } from './screen/ScreenContextProvider.js';
 import { CapabilityManager } from './capability/CapabilityManager.js';
 import { realCapabilityQueryFn } from './capability/realCapabilityQuery.js';
@@ -18,7 +21,7 @@ import { ConversationStore } from './history/ConversationStore.js';
 import { NightlyJob, createClaudeDistiller } from './memory/NightlyJob.js';
 import { ReminderStore } from './proactive/ReminderStore.js';
 import { ReminderScheduler } from './proactive/ReminderScheduler.js';
-import { ProactiveManager, defaultWatches } from './proactive/ProactiveManager.js';
+import { ProactiveManager, composeWatches } from './proactive/ProactiveManager.js';
 import { WatchStore } from './proactive/WatchStore.js';
 import { detectHost } from './util/host.js';
 import { daemonEnvelopeContext, newToken } from './util/ids.js';
@@ -27,13 +30,6 @@ import { createLogger } from './util/logger.js';
 
 const log = createLogger({ scope: 'workerking' });
 
-// Process-wide memory store + interaction log (file-based under ~/.claude/workerking).
-const memory = new MemoryStore();
-const interactionLog = new InteractionLog();
-const conversations = new ConversationStore();
-const watchStore = new WatchStore();
-const reminderStore = new ReminderStore();
-
 /** The Voyager-pattern nudge: encourage Claude to grow its own skills. */
 const SELF_AUTHOR_NUDGE =
   'If you find yourself doing the same multi-step task more than once, offer to save it as a ' +
@@ -41,6 +37,31 @@ const SELF_AUTHOR_NUDGE =
   '(and voice-routable) next time.';
 
 export const DAEMON_VERSION = '0.0.0';
+
+/**
+ * The daemon's stateful, file-backed stores. Injected rather than declared at
+ * module scope so a test can point them at a temp dir (or fakes) and merely
+ * importing this module has no filesystem side effects — the same
+ * dependency-injection style already used by `DaemonSupervisor`/`ClaudeBackend`.
+ */
+export interface DaemonDeps {
+  memory: MemoryStore;
+  interactionLog: InteractionLog;
+  conversations: ConversationStore;
+  watchStore: WatchStore;
+  reminderStore: ReminderStore;
+}
+
+/** Build the real file-backed stores, overriding any provided (tests inject). */
+export function createDaemonDeps(overrides: Partial<DaemonDeps> = {}): DaemonDeps {
+  return {
+    memory: overrides.memory ?? new MemoryStore(),
+    interactionLog: overrides.interactionLog ?? new InteractionLog(),
+    conversations: overrides.conversations ?? new ConversationStore(),
+    watchStore: overrides.watchStore ?? new WatchStore(),
+    reminderStore: overrides.reminderStore ?? new ReminderStore(),
+  };
+}
 
 export interface StartDaemonOptions {
   port?: number;
@@ -54,6 +75,8 @@ export interface StartDaemonOptions {
    * echo; 'claude' requires Claude; 'echo' is the no-AI Phase 0 brain.
    */
   brainMode?: 'auto' | 'claude' | 'echo';
+  /** Inject stores (tests point these at a temp dir); real ones built otherwise. */
+  deps?: Partial<DaemonDeps>;
 }
 
 export interface RunningDaemon {
@@ -75,7 +98,10 @@ export interface RunningDaemon {
  * imported (Handlebars-assembled), else the simple name+personality form. Read
  * live per message so settings/card changes apply without a restart.
  */
-export function computePersonaAppend(config: ConfigStore): string {
+export function computePersonaAppend(
+  config: ConfigStore,
+  memory?: Pick<MemoryStore, 'summary'>,
+): string {
   let base: string;
   const card = config.get('characterCard');
   if (card) {
@@ -91,7 +117,7 @@ export function computePersonaAppend(config: ConfigStore): string {
 
   // Layer in remembered facts (always in context) + the self-authoring nudge.
   const parts = [base, SELF_AUTHOR_NUDGE];
-  if (config.get('memoryEnabled') !== false) {
+  if (memory && config.get('memoryEnabled') !== false) {
     const mem = memory.summary();
     if (mem) parts.push(mem);
   }
@@ -108,8 +134,10 @@ async function resolveBrain(
   server: WsServer,
   mode: 'auto' | 'claude',
   registerDisposable: (d: Disposable) => void,
+  deps: DaemonDeps,
   proactiveHolder: { manager?: ProactiveManager } = {},
 ): Promise<void> {
+  const { memory, interactionLog, watchStore, reminderStore } = deps;
   const cwd = config.get('claudeCwd') as string | undefined;
 
   // Proactive channel: reminders + notify tool → proactive.notify broadcast.
@@ -166,12 +194,25 @@ async function resolveBrain(
     scheduleReminder,
     audit: (e) => log.child('tool').info(e.tool, { detail: e.detail }),
   });
+  // N1: gate the Claude Code toolset. Destructive tools (Bash/Write/Edit) are
+  // confirmed via a fail-closed UI round-trip in 'gated' mode (the default),
+  // denied outright in 'readonly', or unchecked in 'auto'. Read live from config.
+  const canUseTool = createToolPolicy({
+    mode: () => (config.get('toolPermissionMode') as ToolPermissionMode | undefined) ?? 'gated',
+    confirmer: new WsToolConfirmer(server),
+    summarize: summarizeToolCall,
+  });
+  // Autonomous background brains (nightly distiller, proactive watches) run with
+  // no user present to approve — force them read-only so a scheduled prompt can
+  // never run Bash/Write/Edit on its own.
+  const backgroundCanUseTool = createToolPolicy({ mode: () => 'readonly' });
   const claudeOpts = {
     cwd,
     // Live persona: re-read config (incl. character card) on every message.
-    personaProvider: () => computePersonaAppend(config),
+    personaProvider: () => computePersonaAppend(config, memory),
     mcpServers: { workerking: toolServer },
     allowedTools: WORKERKING_TOOL_ALLOWLIST,
+    canUseTool,
   };
 
   const startCapabilities = () => {
@@ -200,7 +241,7 @@ async function resolveBrain(
     // Nightly memory consolidation (Letta sleep-time), when memory is enabled.
     if (config.get('memoryEnabled') !== false) {
       const distiller = createClaudeDistiller((prompt) =>
-        createClaudeBackend({ cwd }).respond(prompt, () => {}),
+        createClaudeBackend({ cwd, canUseTool: backgroundCanUseTool }).respond(prompt, () => {}),
       );
       const job = new NightlyJob({ memory, log: interactionLog, distill: distiller });
       job.start();
@@ -210,9 +251,10 @@ async function resolveBrain(
     // Proactive/ambient watches (spends Claude quota on a timer) — opt-in.
     if (config.get('proactiveEnabled') === true) {
       const manager = new ProactiveManager({
-        respond: (prompt) => createClaudeBackend({ cwd }).respond(prompt, () => {}),
+        respond: (prompt) =>
+          createClaudeBackend({ cwd, canUseTool: backgroundCanUseTool }).respond(prompt, () => {}),
         notify: proactiveNotify,
-        watches: [...defaultWatches(), ...watchStore.list()],
+        watches: composeWatches(watchStore),
       });
       manager.start();
       proactiveHolder.manager = manager; // let the supervisor live-reload it
@@ -252,6 +294,8 @@ export async function startDaemon(opts: StartDaemonOptions = {}): Promise<Runnin
   // Headless daemon: persist config so a standalone run doesn't reset on restart.
   const config = new ConfigStore(undefined, { persist: true });
   const server = new WsServer({ token, host, daemonVersion: DAEMON_VERSION });
+  // Stores are injected (tests) or built here — never module-global.
+  const deps = createDaemonDeps(opts.deps);
 
   // Pick the brain without blocking boot: an injected brain or the echo brain is
   // used directly; otherwise a DeferredBrain is installed now and the real Claude
@@ -278,13 +322,22 @@ export async function startDaemon(opts: StartDaemonOptions = {}): Promise<Runnin
       server,
       mode,
       (d) => disposables.push(d),
+      deps,
       proactiveHolder,
     ).catch(() => {});
   }
-  new Supervisor(server, config, brain, interactionLog, conversations, {
-    store: watchStore,
-    reload: (watches) => proactiveHolder.manager?.reload(watches),
-  });
+  new Supervisor(
+    server,
+    config,
+    brain,
+    deps.interactionLog,
+    deps.conversations,
+    {
+      store: deps.watchStore,
+      reload: (watches) => proactiveHolder.manager?.reload(watches),
+    },
+    log,
+  );
 
   const requestedPort =
     opts.port ?? (process.env.WORKERKING_PORT ? Number(process.env.WORKERKING_PORT) : 0);

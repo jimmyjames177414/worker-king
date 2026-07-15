@@ -4,6 +4,7 @@ import { createWriteStream } from 'node:fs';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import Store from 'electron-store';
+import { DEFAULT_CONFIG, CONFIG_KEYS, type WorkerKingConfig } from '@workerking/shared';
 
 // Tee stderr to a log file so the F5 debugger session is visible to Claude.
 if (process.env['WORKERKING_APP_LOG']) {
@@ -36,71 +37,13 @@ import { captureScreen } from './ScreenCapture.js';
  */
 
 // The persisted, user-editable config. Main owns this file (electron-store); the
-// daemon receives a copy over WS on connect and on every change.
-interface AppConfig {
-  assistantName: string;
-  personality: string;
-  theme: 'system' | 'light' | 'dark';
-  voiceProvider: 'gpt-realtime' | 'local-cascade';
-  openaiModel: string;
-  hotkey: string;
-  claudeHost: 'auto' | 'windows' | 'wsl';
-  wakeWordEnabled: boolean;
-  screenAwareness: boolean;
-  memoryEnabled: boolean;
-  semanticMemory: boolean;
-  remindersEnabled: boolean;
-  proactiveEnabled: boolean;
-  explainHotkey: string;
-  inputDeviceId?: string;
-  outputDeviceId?: string;
-  userName?: string;
-  characterCard?: unknown;
-  [k: string]: unknown;
-}
-
-const config = new Store<AppConfig>({
+// daemon receives a copy over WS on connect and on every change. The config
+// *shape* (schema, defaults, key list) is defined once in @workerking/shared so
+// this side can never drift from the daemon's ConfigStore.
+const config = new Store<WorkerKingConfig>({
   name: 'config',
-  defaults: {
-    assistantName: 'WorkerKing',
-    theme: 'system',
-    personality:
-      'A capable, upbeat desktop companion. Concise out loud, thorough when it matters.',
-    voiceProvider: 'gpt-realtime',
-    openaiModel: 'gpt-realtime-mini',
-    hotkey: 'Control+Shift+Space',
-    claudeHost: 'auto',
-    wakeWordEnabled: false,
-    screenAwareness: false,
-    memoryEnabled: true,
-    semanticMemory: false,
-    remindersEnabled: true,
-    proactiveEnabled: false,
-    explainHotkey: 'Control+Shift+E',
-  },
+  defaults: DEFAULT_CONFIG,
 });
-
-/** Keys that must never be pushed as plaintext (secrets live in safeStorage). */
-const CONFIG_KEYS: Array<keyof AppConfig> = [
-  'assistantName',
-  'theme',
-  'personality',
-  'voiceProvider',
-  'openaiModel',
-  'hotkey',
-  'claudeHost',
-  'wakeWordEnabled',
-  'screenAwareness',
-  'memoryEnabled',
-  'semanticMemory',
-  'remindersEnabled',
-  'proactiveEnabled',
-  'explainHotkey',
-  'inputDeviceId',
-  'outputDeviceId',
-  'userName',
-  'characterCard',
-];
 
 /** Push the whole persisted config to the daemon so its ConfigStore reflects it. */
 function pushConfigToDaemon(): void {
@@ -198,7 +141,7 @@ async function boot(): Promise<void> {
     },
     // Persist a config change and forward it to the daemon (live reload).
     setConfig: (key, value) => {
-      config.set(key, value as AppConfig[keyof AppConfig]);
+      config.set(key, value as WorkerKingConfig[keyof WorkerKingConfig]);
       daemonClient?.send('config.set', { key, value });
       if (key === 'hotkey' && typeof value === 'string') registerHotkey(value);
       if (key === 'explainHotkey' && typeof value === 'string') registerExplainHotkey(value);

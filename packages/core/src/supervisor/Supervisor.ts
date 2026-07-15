@@ -7,8 +7,9 @@ import { daemonEnvelopeContext } from '../util/ids.js';
 import type { InteractionLog } from '../memory/InteractionLog.js';
 import type { ConversationStore } from '../history/ConversationStore.js';
 import type { WatchStore } from '../proactive/WatchStore.js';
-import { defaultWatches } from '../proactive/ProactiveManager.js';
+import { composeWatches } from '../proactive/ProactiveManager.js';
 import type { Watch } from '@workerking/shared';
+import type { Logger } from '../util/logger.js';
 
 /** How the Supervisor manages proactive watches (persist + live reload). */
 export interface WatchDeps {
@@ -37,6 +38,8 @@ export class Supervisor {
     private readonly log?: InteractionLog,
     private readonly history?: ConversationStore,
     private readonly watches?: WatchDeps,
+    /** Structured logger for per-turn tracing (N8). */
+    private readonly logger?: Logger,
   ) {
     // TaskManager drives delegated (voice) work; its events become task.* broadcasts.
     this.tasks = new TaskManager({
@@ -135,6 +138,10 @@ export class Supervisor {
     env: WsEnvelope<'chat.user_message'>,
   ): Promise<void> {
     const { text, messageId } = env.payload;
+    // Per-turn trace: the envelope id correlates every log line for this turn (N8).
+    const turnLog = this.logger?.child('turn');
+    const startedAt = daemonEnvelopeContext.now();
+    turnLog?.info('chat.start', { turnId: env.id, messageId, chars: text.length });
     this.history?.append('user', text);
     try {
       const full = await this.brain.respond(text, (delta) => {
@@ -143,7 +150,16 @@ export class Supervisor {
       client.send('chat.assistant_done', { messageId, text: full });
       this.history?.append('assistant', full);
       this.log?.append('chat', `user: ${text} | assistant: ${full.slice(0, 200)}`);
+      // Surface token/cost usage when the brain tracks it (N9).
+      const usage = (this.brain as { getLastUsage?: () => unknown }).getLastUsage?.();
+      turnLog?.info('chat.done', {
+        turnId: env.id,
+        ms: daemonEnvelopeContext.now() - startedAt,
+        chars: full.length,
+        ...(usage ? { usage } : {}),
+      });
     } catch (err) {
+      turnLog?.warn('chat.error', { turnId: env.id, error: String(err) });
       client.send('error', {
         message: `Brain failed: ${String(err)}`,
         code: 'brain_error',
@@ -191,7 +207,7 @@ export class Supervisor {
 
   /** All watches = built-ins + user-defined. */
   private allWatches(): Watch[] {
-    return [...defaultWatches(), ...(this.watches?.store.list() ?? [])];
+    return composeWatches(this.watches?.store);
   }
 
   private sendWatches(client: WsClient): void {

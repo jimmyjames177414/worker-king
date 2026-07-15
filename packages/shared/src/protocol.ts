@@ -104,6 +104,19 @@ const screenCaptureResultPayload = z.object({
 
 // Proactive/ambient: WorkerKing surfaces something unprompted (reminders, watch
 // heads-ups, or a `notify` tool call). Overlay speaks it; main shows a toast.
+// Tool-permission gate (daemon -> UI -> daemon). When the Claude Code toolset is
+// 'gated', a destructive tool call round-trips to a UI client for fail-closed
+// approval before it runs; the reply sets `replyTo` to the request id.
+const toolConfirmRequestPayload = z.object({
+  /** Tool being requested, e.g. "Bash" or "Write". */
+  tool: z.string(),
+  /** Human-readable one-liner describing what it wants to do. */
+  summary: z.string(),
+});
+const toolConfirmResponsePayload = z.object({
+  approved: z.boolean(),
+});
+
 const proactiveNotifyPayload = z.object({
   text: z.string(),
   level: z.enum(['info', 'warn', 'success']).default('info'),
@@ -199,6 +212,9 @@ export const payloadSchemas = {
 
   'screen.capture_request': screenCaptureRequestPayload,
   'screen.capture_result': screenCaptureResultPayload,
+
+  'tool.confirm_request': toolConfirmRequestPayload,
+  'tool.confirm_response': toolConfirmResponsePayload,
 
   'proactive.notify': proactiveNotifyPayload,
 

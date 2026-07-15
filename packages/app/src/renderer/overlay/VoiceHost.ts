@@ -1,6 +1,9 @@
 import type { VoiceProvider } from '@workerking/voice-providers';
-import { isKind, type JsonValue } from '@workerking/shared';
+import { isKind, SentenceChunker, type JsonValue } from '@workerking/shared';
 import type { WsClient } from '../shared/wsClient.js';
+
+/** Monotonic clock for latency timing (N7). */
+const now = (): number => performance.now();
 
 /** The overlay preload bridge surface VoiceHost needs. */
 interface VoiceBridge {
@@ -22,6 +25,12 @@ export class VoiceHost {
   private active = false;
   private model = 'gpt-realtime-mini';
   private providerId: 'gpt-realtime' | 'local-cascade' = 'gpt-realtime';
+  /** Monotonic id of the current voice turn; bumping it invalidates in-flight replies (N2). */
+  private turnEpoch = 0;
+  /** True while a cascade reply is streaming/being spoken (barge-in target). */
+  private turnActive = false;
+  /** Serializes sentence playback so streamed sentences don't overlap (N3). */
+  private speakChain: Promise<void> = Promise.resolve();
 
   constructor(
     private readonly ws: WsClient,
@@ -137,6 +146,11 @@ export class VoiceHost {
           onAssistantTranscript: (text, final) =>
             this.ws.send('voice.transcript', { role: 'assistant', text, final }),
           onStateChange: (state) => this.ws.send('voice.state', { state }),
+          onSpeechStart: () => {
+            // Barge-in: invalidate any in-flight/queued reply so a now-stale
+            // response is never spoken over the user (N2).
+            if (this.turnActive) this.turnEpoch++;
+          },
           onAudioLevel: (level) => this.ws.send('voice.audio_level', { level }),
           onError: (err) => {
             this.ws.send('voice.state', { state: 'error' });
@@ -152,11 +166,59 @@ export class VoiceHost {
     }
   }
 
-  /** Cascade mode: send a transcript to the daemon Claude brain, speak the reply. */
+  /**
+   * Cascade mode: route a transcript to the daemon Claude brain and speak the
+   * reply *sentence-by-sentence as it streams* (N3), so speech starts on the
+   * first sentence instead of after the whole reply — turning turn latency from
+   * sum(STT+LLM+TTS) toward max(...). Guarded by a turn epoch so a barge-in or a
+   * newer turn drops the stale reply (N2), and timed end-to-end (N7).
+   */
   private async handleCascadeTurn(text: string): Promise<void> {
+    const myTurn = ++this.turnEpoch;
+    this.turnActive = true;
     const messageId = crypto.randomUUID();
-    const reply = await this.awaitChatReply(text, messageId);
-    if (reply) await this.provider?.injectAssistantContext(reply, { speakNow: true });
+    const chunker = new SentenceChunker();
+    const t0 = now();
+    let firstDeltaAt = 0;
+    let spokenAny = false;
+
+    const speak = (sentence: string): void => {
+      spokenAny = true;
+      this.speakChain = this.speakChain
+        .then(async () => {
+          if (myTurn !== this.turnEpoch) return; // superseded by a newer turn / barge-in
+          await this.provider?.injectAssistantContext(sentence, { speakNow: true });
+        })
+        .catch(() => {});
+    };
+
+    // Speak each sentence the moment its boundary streams in.
+    const offDelta = this.ws.on('chat.assistant_delta', (env) => {
+      if (env.payload.messageId !== messageId || myTurn !== this.turnEpoch) return;
+      if (!firstDeltaAt) firstDeltaAt = now();
+      for (const sentence of chunker.push(env.payload.delta)) speak(sentence);
+    });
+
+    try {
+      const full = await this.awaitChatReply(text, messageId);
+      if (myTurn !== this.turnEpoch) return; // barged-in / superseded during generation
+      for (const tail of chunker.flush()) speak(tail);
+      // If the daemon didn't stream deltas, fall back to the whole reply.
+      if (!spokenAny && full) speak(full);
+      await this.speakChain;
+      this.logTurnLatency(t0, firstDeltaAt);
+    } finally {
+      offDelta();
+      if (myTurn === this.turnEpoch) this.turnActive = false;
+    }
+  }
+
+  /** Emit a structured end-of-speech-to-first-audio latency line (N7). */
+  private logTurnLatency(t0: number, firstDeltaAt: number): void {
+    const ttfb = firstDeltaAt ? Math.round(firstDeltaAt - t0) : -1;
+    const total = Math.round(now() - t0);
+    // Renderer console is forwarded to main stderr / the log runner.
+    console.log(`[voice] turn latency: first_token=${ttfb}ms total=${total}ms`);
   }
 
   /** Send chat.user_message and resolve with the full reply (matched by messageId). */

@@ -1,6 +1,7 @@
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { DEFAULT_CONFIG, parseConfig, type WorkerKingConfig } from '@workerking/shared';
 
 /**
  * ConfigStore — the daemon's view of user configuration.
@@ -12,66 +13,13 @@ import { join } from 'node:path';
  * MemoryStore) — otherwise a standalone daemon would forget everything, including
  * an imported character card, on every restart. Persistence is opt-in so tests
  * and the app-proxied path stay in-memory.
+ *
+ * The config *shape* (schema, defaults) lives in `@workerking/shared` so the app
+ * and daemon share one definition; this module only owns persistence + change
+ * notification.
  */
 
-export interface WorkerKingConfig {
-  assistantName: string;
-  personality: string;
-  /** UI theme preference. */
-  theme: 'system' | 'light' | 'dark';
-  /** Active voice provider id. */
-  voiceProvider: 'gpt-realtime' | 'local-cascade';
-  /** OpenAI Realtime model for the voice layer. */
-  openaiModel: string;
-  /** Where the Claude backend runs. 'auto' probes Windows then WSL. */
-  claudeHost: 'auto' | 'windows' | 'wsl';
-  /** Working directory for the Claude Agent SDK session. */
-  claudeCwd?: string;
-  /** Push-to-talk global shortcut accelerator. */
-  hotkey: string;
-  /** Always-listening wake word ("Hey <name>"); off by default (hotkey-first). */
-  wakeWordEnabled: boolean;
-  /** Allow Claude to read the foreground window / screenshots; off by default. */
-  screenAwareness: boolean;
-  /** Persist durable facts/preferences across sessions; on by default. */
-  memoryEnabled: boolean;
-  /** Use local-embedding semantic recall (falls back to keyword if unavailable); off by default. */
-  semanticMemory: boolean;
-  /** Allow scheduled reminders; on by default. */
-  remindersEnabled: boolean;
-  /** Run scheduled proactive "watch" checks (spends Claude quota); off by default. */
-  proactiveEnabled: boolean;
-  /** Global hotkey to explain/act on the current clipboard selection. */
-  explainHotkey: string;
-  /** Preferred microphone deviceId (empty/undefined = system default). */
-  inputDeviceId?: string;
-  /** Preferred audio-output deviceId (empty/undefined = system default). */
-  outputDeviceId?: string;
-  /** The user's display name, for {{user}} in character cards. */
-  userName?: string;
-  /** Active SillyTavern chara_card_v2 (object), if the user imported one. */
-  characterCard?: unknown;
-  [key: string]: unknown;
-}
-
-export const DEFAULT_CONFIG: WorkerKingConfig = {
-  assistantName: 'WorkerKing',
-  theme: 'system',
-  personality:
-    'A capable, upbeat desktop companion. Concise out loud, thorough when it matters. ' +
-    'Delegates real work to Claude Code and narrates progress plainly.',
-  voiceProvider: 'gpt-realtime',
-  openaiModel: 'gpt-realtime-mini',
-  claudeHost: 'auto',
-  hotkey: 'Control+Shift+Space',
-  wakeWordEnabled: false,
-  screenAwareness: false,
-  memoryEnabled: true,
-  semanticMemory: false,
-  remindersEnabled: true,
-  proactiveEnabled: false,
-  explainHotkey: 'Control+Shift+E',
-};
+export { DEFAULT_CONFIG, type WorkerKingConfig } from '@workerking/shared';
 
 export type ConfigChangeListener = (key: string, value: unknown) => void;
 
@@ -98,7 +46,9 @@ export class ConfigStore {
     if (!this.persistPath || !existsSync(this.persistPath)) return {};
     try {
       const parsed = JSON.parse(readFileSync(this.persistPath, 'utf8'));
-      return parsed && typeof parsed === 'object' ? parsed : {};
+      // Validate against the shared schema: well-typed keys are kept, bad ones
+      // dropped, so a corrupt/tampered field can't poison the daemon's config.
+      return parseConfig(parsed);
     } catch {
       // Corrupt file → fall back to defaults; the next write repairs it.
       return {};

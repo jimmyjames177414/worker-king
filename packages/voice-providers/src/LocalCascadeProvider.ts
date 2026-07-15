@@ -1,3 +1,4 @@
+import { sanitizeForSpeech } from '@workerking/shared';
 import type {
   VoiceProvider,
   VoiceProviderState,
@@ -62,6 +63,8 @@ export class LocalCascadeProvider implements VoiceProvider {
         // Ignore while muted or stopped so muting truly silences the mic.
         if (!this.running || !this.micEnabled) return;
         this.engines.tts.stop();
+        // Signal barge-in so the host can drop an in-flight/queued reply (N2).
+        this.startOpts?.delegate.onSpeechStart?.();
         this.setState('listening');
       },
     );
@@ -98,10 +101,14 @@ export class LocalCascadeProvider implements VoiceProvider {
   /** Speak assistant text (the brain's reply, or a progress update). */
   async injectAssistantContext(text: string): Promise<void> {
     if (!text.trim()) return;
-    this.startOpts?.delegate.onAssistantTranscript(text, true);
+    // Flatten markdown/code/reasoning so the TTS engine never voices literal
+    // backticks, asterisks, or a <think> block (N4).
+    const spoken = sanitizeForSpeech(text);
+    if (!spoken) return;
+    this.startOpts?.delegate.onAssistantTranscript(spoken, true);
     this.setState('talking');
     try {
-      await this.engines.tts.speak(text);
+      await this.engines.tts.speak(spoken);
     } finally {
       if (this.running) this.setState('listening');
     }

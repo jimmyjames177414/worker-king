@@ -1,4 +1,4 @@
-import type { JsonValue } from '@workerking/shared';
+import { sanitizeForSpeech, type JsonValue } from '@workerking/shared';
 import type {
   VoiceProvider,
   VoiceProviderState,
@@ -111,9 +111,11 @@ export class GptRealtimeProvider implements VoiceProvider {
   async injectAssistantContext(text: string, opts?: { speakNow?: boolean }): Promise<void> {
     // Phase 2: surface progress/context by feeding it to the session. Phase 3
     // refines this into turn-gated out-of-band responses; for now a message is
-    // enough to make the model voice it.
+    // enough to make the model voice it. Flatten markdown so injected progress
+    // isn't voiced with literal formatting (N4).
     void opts;
-    this.session?.sendMessage(text);
+    const spoken = sanitizeForSpeech(text);
+    if (spoken) this.session?.sendMessage(spoken);
   }
 
   async interrupt(): Promise<void> {
