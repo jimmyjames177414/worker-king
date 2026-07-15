@@ -192,6 +192,16 @@ export class ConversationStore {
     return this.find(id)?.summary;
   }
 
+  /**
+   * Summary of the *current* conversation without creating one — safe to call
+   * while assembling per-message context (unlike currentId(), which would start
+   * a conversation as a side effect).
+   */
+  currentSummary(): string | undefined {
+    const conv = this.data.currentId ? this.find(this.data.currentId) : undefined;
+    return conv?.summary;
+  }
+
   /** Delete a conversation; if it was current, the next append starts a new one. */
   delete(id: string): boolean {
     const i = this.data.conversations.findIndex((c) => c.id === id);

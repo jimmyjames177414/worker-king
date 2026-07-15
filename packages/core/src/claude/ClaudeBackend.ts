@@ -29,6 +29,13 @@ export interface ClaudeBackendOptions {
   queryFn: ClaudeQueryFn;
   /** Working directory for the Claude Code session. */
   cwd?: string;
+  /**
+   * Live working-directory provider (read per message) — lets a settings change
+   * repoint Claude at another project without a restart. Takes precedence over
+   * `cwd`; when it returns a different dir, the session is reset so context from
+   * the previous project doesn't leak (F1).
+   */
+  cwdProvider?: () => string | undefined;
   /** Persona appended to Claude Code's preset system prompt. */
   personaAppend?: string;
   /**
@@ -86,6 +93,9 @@ export interface ClaudeUsage {
 export class ClaudeBackend implements Brain {
   readonly id = 'claude';
   private sessionId: string | undefined;
+  /** Working dir the current session belongs to; used to detect a repo switch. */
+  private lastCwd: string | undefined;
+  private cwdInitialized = false;
   /** Usage from the most recent completed turn (N9 — feeds budget awareness). */
   private lastUsage: ClaudeUsage | undefined;
 
@@ -93,6 +103,11 @@ export class ClaudeBackend implements Brain {
 
   private buildOptions(): Options {
     const append = this.opts.personaProvider?.() ?? this.opts.personaAppend;
+    const cwd = this.opts.cwdProvider?.() ?? this.opts.cwd;
+    // Repoint to a different project → don't resume the old project's session (F1).
+    if (this.cwdInitialized && cwd !== this.lastCwd) this.sessionId = undefined;
+    this.lastCwd = cwd;
+    this.cwdInitialized = true;
     const options: Options = {
       systemPrompt: {
         type: 'preset',
@@ -100,7 +115,7 @@ export class ClaudeBackend implements Brain {
         ...(append ? { append } : {}),
       },
       includePartialMessages: true,
-      ...(this.opts.cwd ? { cwd: this.opts.cwd } : {}),
+      ...(cwd ? { cwd } : {}),
       ...(this.opts.permissionMode ? { permissionMode: this.opts.permissionMode } : {}),
       ...(this.opts.canUseTool ? { canUseTool: this.opts.canUseTool } : {}),
       ...(this.opts.maxTurns ? { maxTurns: this.opts.maxTurns } : {}),

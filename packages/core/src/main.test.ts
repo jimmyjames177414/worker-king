@@ -28,7 +28,7 @@ describe('computePersonaAppend memory injection', () => {
   >;
 
   it('appends the injected memory summary', () => {
-    const append = computePersonaAppend(new ConfigStore(), fakeMemory);
+    const append = computePersonaAppend(new ConfigStore(), { memory: fakeMemory });
     expect(append).toContain('likes tea');
   });
 
@@ -38,7 +38,9 @@ describe('computePersonaAppend memory injection', () => {
   });
 
   it('skips memory when memoryEnabled is false', () => {
-    const append = computePersonaAppend(new ConfigStore({ memoryEnabled: false }), fakeMemory);
+    const append = computePersonaAppend(new ConfigStore({ memoryEnabled: false }), {
+      memory: fakeMemory,
+    });
     expect(append).not.toContain('likes tea');
   });
 
@@ -47,5 +49,38 @@ describe('computePersonaAppend memory injection', () => {
       new ConfigStore({ assistantName: 'Bea', personality: 'calm and precise' }),
     );
     expect(append).toContain('Bea');
+  });
+});
+
+describe('computePersonaAppend ambient context (F2)', () => {
+  const fixedNow = () => new Date('2026-07-15T09:00:00.000Z');
+
+  it('injects the current date/time', () => {
+    const append = computePersonaAppend(new ConfigStore(), { now: fixedNow });
+    expect(append).toContain('Current date and time: 2026-07-15T09:00:00.000Z');
+  });
+
+  it('injects the active project from cwd', () => {
+    const append = computePersonaAppend(new ConfigStore(), {
+      cwd: '/home/user/code/amethyst',
+      now: fixedNow,
+    });
+    expect(append).toContain('Active project: amethyst (/home/user/code/amethyst)');
+  });
+
+  it('folds in the current conversation summary when present (closes N14)', () => {
+    const convs = { currentSummary: () => 'user: earlier plan | assistant: earlier reply' };
+    const append = computePersonaAppend(new ConfigStore(), { conversations: convs, now: fixedNow });
+    expect(append).toContain('scrolled out of context');
+    expect(append).toContain('earlier plan');
+  });
+
+  it('omits project/summary lines when there is no cwd or summary', () => {
+    const append = computePersonaAppend(new ConfigStore(), {
+      conversations: { currentSummary: () => undefined },
+      now: fixedNow,
+    });
+    expect(append).not.toContain('Active project');
+    expect(append).not.toContain('scrolled out of context');
   });
 });
