@@ -3,6 +3,8 @@ import { Settings, type SettingsBridge } from './Settings.js';
 import { renderMarkdown } from './markdown.js';
 import { decorateAssistantBubble } from './copy.js';
 import { applyTheme, normalizeThemePref } from '../shared/theme.js';
+import { CommandPalette } from './palette.js';
+import type { CapabilityManifestEntry } from '@workerking/shared';
 
 /**
  * Chat renderer entry. Text chat plus a task-list panel (delegated work streamed
@@ -196,6 +198,13 @@ async function main(): Promise<void> {
   client.on('config.changed', (env) => {
     if (env.payload.key === 'theme') applyTheme(normalizeThemePref(env.payload.value));
   });
+
+  // Command palette: cache the capability manifest, filter it on "/".
+  let capabilities: CapabilityManifestEntry[] = [];
+  client.on('capability.updated', (env) => {
+    capabilities = env.payload.manifest.entries;
+  });
+  new CommandPalette(input, form, () => capabilities);
 
   // Track the in-flight assistant bubble by messageId.
   const bubbles = new Map<string, HTMLElement>();

@@ -1,5 +1,5 @@
 import { writeFileSync } from 'node:fs';
-import type { PayloadOf } from '@workerking/shared';
+import type { PayloadOf, CapabilityManifest } from '@workerking/shared';
 import { WsServer } from './ws/server.js';
 import { ConfigStore } from './config/ConfigStore.js';
 import { Supervisor } from './supervisor/Supervisor.js';
@@ -172,11 +172,22 @@ async function resolveBrain(
   };
 
   const startCapabilities = () => {
+    let lastManifest: CapabilityManifest | undefined;
     const cm = new CapabilityManager({
       queryFn: realCapabilityQueryFn,
       sdkOptions: cwd ? { cwd } : {},
-      broadcast: (manifest) => server.broadcast('capability.updated', { manifest }),
+      broadcast: (manifest) => {
+        lastManifest = manifest;
+        server.broadcast('capability.updated', { manifest });
+      },
       cwd,
+    });
+    // Replay the latest manifest to any client that connects after it was built,
+    // so the chat command palette always has capabilities to show.
+    registerDisposable({
+      stop: server.onClientConnected((client) => {
+        if (lastManifest) client.send('capability.updated', { manifest: lastManifest });
+      }),
     });
     registerDisposable(cm);
     cm.start().catch((e) =>

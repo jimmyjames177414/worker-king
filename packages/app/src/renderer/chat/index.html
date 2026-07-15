@@ -58,7 +58,16 @@
       .task--error .task__badge { background: #f5544a; color: #fff; }
       .task--cancelled .task__badge { background: rgba(128,128,128,0.4); }
       #tasks-close { margin-top: 8px; background: rgba(128,128,128,0.25); color: inherit; }
-      #composer { display: flex; gap: 8px; padding: 10px; border-top: 1px solid rgba(128,128,128,0.25); }
+      #composer { display: flex; gap: 8px; padding: 10px; border-top: 1px solid rgba(128,128,128,0.25); position: relative; }
+      /* Command palette (typing "/") */
+      .palette { position: absolute; left: 10px; right: 10px; bottom: calc(100% + 4px); max-height: 240px;
+        overflow-y: auto; background: Canvas; border: 1px solid rgba(128,128,128,0.4); border-radius: 10px;
+        box-shadow: 0 -6px 20px rgba(0,0,0,0.25); z-index: 6; }
+      .palette__item { display: flex; gap: 8px; align-items: baseline; padding: 7px 10px; cursor: pointer; }
+      .palette__item--active, .palette__item:hover { background: rgba(42,108,255,0.18); }
+      .palette__kind { font-size: 10px; text-transform: uppercase; opacity: 0.6; flex: none; min-width: 62px; }
+      .palette__name { font-weight: 600; font-size: 13px; flex: none; }
+      .palette__desc { font-size: 12px; opacity: 0.65; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       #input { flex: 1; padding: 9px 12px; border-radius: 10px; border: 1px solid rgba(128,128,128,0.4); background: Field; color: FieldText; font: inherit; }
       button { padding: 9px 16px; border: none; border-radius: 10px; background: #2a6cff; color: #fff; font: inherit; cursor: pointer; }
       button:hover { filter: brightness(1.08); }
