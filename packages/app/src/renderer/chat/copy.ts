@@ -12,7 +12,10 @@ export interface ClipboardLike {
 /** Write text to the clipboard, returning whether it succeeded (never throws). */
 export async function copyToClipboard(
   text: string,
-  clip: ClipboardLike | undefined = navigator.clipboard,
+  // `globalThis.navigator?.` (not a bare `navigator`) so this never throws in a
+  // no-DOM environment — e.g. the CI test runner on Node 20, where `navigator`
+  // isn't a global. There it resolves to undefined and we return false.
+  clip: ClipboardLike | undefined = globalThis.navigator?.clipboard,
 ): Promise<boolean> {
   try {
     if (!clip) return false;

@@ -26,6 +26,7 @@ import { createTray } from './TrayController.js';
 import { registerIpc } from './ipc.js';
 import { DaemonClient } from './DaemonClient.js';
 import { captureScreen } from './ScreenCapture.js';
+import { HotkeyManager } from './HotkeyManager.js';
 
 /**
  * WorkerKing Electron main. Phase 0 wiring:
@@ -62,8 +63,24 @@ let quitting = false;
 
 // Pending explain-hotkey requests, keyed by messageId → callback with the reply.
 const pendingExplain = new Map<string, (text: string) => void>();
-let currentHotkey = '';
-let currentExplainHotkey = '';
+
+// Global shortcuts (push-to-talk + explain-selection), created at boot.
+const hotkeys = new HotkeyManager(globalShortcut, {
+  pushToTalk: () => overlay?.webContents.send('wk:push-to-talk'),
+  explain: () => explainSelection(),
+});
+/** Bind push-to-talk, warning if the accelerator is already taken. */
+function registerHotkey(accelerator: string): void {
+  if (!hotkeys.setPushToTalk(accelerator)) {
+    process.stderr.write(`[workerking] failed to register hotkey "${accelerator}" (already taken)\n`);
+  }
+}
+/** Bind the explain-selection shortcut, warning if taken. */
+function registerExplainHotkey(accelerator: string): void {
+  if (!hotkeys.setExplain(accelerator)) {
+    process.stderr.write(`[workerking] failed to register explain hotkey "${accelerator}" (already taken)\n`);
+  }
+}
 
 async function resolveDaemonMode(): Promise<'windows' | 'wsl'> {
   const pref = config.get('claudeHost');
@@ -192,29 +209,6 @@ async function boot(): Promise<void> {
   });
 }
 
-/** (Re)register the push-to-talk global shortcut, replacing any prior binding. */
-function registerHotkey(accelerator: string): void {
-  // Re-register just the push-to-talk key (keep the explain key intact).
-  if (currentHotkey) globalShortcut.unregister(currentHotkey);
-  currentHotkey = accelerator;
-  const ok = globalShortcut.register(accelerator, () => {
-    overlay?.webContents.send('wk:push-to-talk');
-  });
-  if (!ok) {
-    process.stderr.write(`[workerking] failed to register hotkey "${accelerator}" (already taken)\n`);
-  }
-}
-
-/** (Re)register the "explain the current selection" global shortcut. */
-function registerExplainHotkey(accelerator: string): void {
-  if (currentExplainHotkey) globalShortcut.unregister(currentExplainHotkey);
-  currentExplainHotkey = accelerator;
-  const ok = globalShortcut.register(accelerator, () => explainSelection());
-  if (!ok) {
-    process.stderr.write(`[workerking] failed to register explain hotkey "${accelerator}" (already taken)\n`);
-  }
-}
-
 /** Read the clipboard selection, ask Claude to explain/act on it, speak + toast the reply. */
 function explainSelection(): void {
   const text = clipboard.readText().trim();
@@ -250,7 +244,7 @@ app.on('before-quit', () => {
 });
 
 app.on('will-quit', () => {
-  globalShortcut.unregisterAll();
+  hotkeys.unregisterAll();
   daemonClient?.close();
   supervisor?.stop();
 });
