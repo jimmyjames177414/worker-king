@@ -354,10 +354,14 @@ Landed on `claude/app-refactoring-assessment-s2x2ph`, each committed separately,
 - **N8/N9** correlated per-turn `chat.start/done/error` logs with latency + SDK usage capture.
 - **N11** `setWindowOpenHandler`/`will-navigate` deny on both windows; 16 MiB WS payload cap;
   config validate-on-load (via 1a).
+- **2a** daemon stores injected via `DaemonDeps`/`createDaemonDeps()` instead of module globals;
+  `computePersonaAppend(config, memory?)`; importing `main.ts` is now side-effect-free.
+- **N10** opt-in `pnpm eval` harness (routing/speech/persona goldens + optional Claude LLM tier),
+  outside the CI gate.
 
-**Deferred (bigger / need UI or a runner):** Stage 2 god-file decomposition (2a/2b), N10 eval harness,
-N12 durable/resumable tasks, N13 semantic turn detection, N14 conversation summarization, N15
-screenshot redaction, and a Settings control to switch `toolPermissionMode` from the app UI.
+**Deferred (bigger / need UI or a runner):** 2b (app `index.ts` split), N12 durable/resumable tasks,
+N13 semantic turn detection, N14 conversation summarization, N15 screenshot redaction, and a Settings
+control to switch `toolPermissionMode` from the app UI.
 
 ---
 
