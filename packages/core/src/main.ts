@@ -298,10 +298,18 @@ export async function startDaemon(opts: StartDaemonOptions = {}): Promise<Runnin
       proactiveHolder,
     ).catch(() => {});
   }
-  new Supervisor(server, config, brain, interactionLog, conversations, {
-    store: watchStore,
-    reload: (watches) => proactiveHolder.manager?.reload(watches),
-  });
+  new Supervisor(
+    server,
+    config,
+    brain,
+    interactionLog,
+    conversations,
+    {
+      store: watchStore,
+      reload: (watches) => proactiveHolder.manager?.reload(watches),
+    },
+    log,
+  );
 
   const requestedPort =
     opts.port ?? (process.env.WORKERKING_PORT ? Number(process.env.WORKERKING_PORT) : 0);

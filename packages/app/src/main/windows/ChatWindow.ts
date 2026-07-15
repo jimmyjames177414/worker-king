@@ -1,6 +1,6 @@
 import { BrowserWindow } from 'electron';
 import { join } from 'node:path';
-import { loadRenderer } from './OverlayWindow.js';
+import { loadRenderer, hardenNavigation } from './OverlayWindow.js';
 
 /**
  * The full chat window: a normal resizable window, created hidden and toggled
@@ -29,6 +29,7 @@ export function createChatWindow(): BrowserWindow {
     }
   });
 
+  hardenNavigation(win);
   loadRenderer(win, 'chat');
   return win;
 }

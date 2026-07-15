@@ -116,7 +116,9 @@ export class WsServer {
   /** Start listening. Pass 0 (default) for an OS-assigned ephemeral port. */
   start(port = 0): Promise<number> {
     return new Promise((resolve, reject) => {
-      const wss = new WebSocketServer({ host: this.address, port });
+      // Cap inbound frames (N11): generous enough for base64 screenshots, but
+      // bounded so a malformed/hostile peer can't force a huge allocation.
+      const wss = new WebSocketServer({ host: this.address, port, maxPayload: 16 * 1024 * 1024 });
       this.wss = wss;
       wss.on('error', reject);
       wss.on('listening', () => {

@@ -1,4 +1,4 @@
-import { BrowserWindow, screen } from 'electron';
+import { BrowserWindow, screen, shell } from 'electron';
 import { join } from 'node:path';
 
 const OVERLAY_WIDTH = 148;
@@ -43,8 +43,27 @@ export function createOverlayWindow(): BrowserWindow {
   // Window is sized to the avatar — always solid, no click-through needed.
   win.setIgnoreMouseEvents(false);
 
+  hardenNavigation(win);
   loadRenderer(win, 'overlay');
   return win;
+}
+
+/**
+ * Navigation hardening (N11). The renderers only ever load their own bundled
+ * HTML, so deny window.open (route real links to the OS browser instead) and
+ * block any in-place navigation to a foreign origin — belt-and-braces with the
+ * CSP if a renderer is ever coerced into navigating somewhere it shouldn't.
+ */
+export function hardenNavigation(win: BrowserWindow): void {
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:\/\//i.test(url)) void shell.openExternal(url);
+    return { action: 'deny' };
+  });
+  const devServer = process.env['ELECTRON_RENDERER_URL'];
+  win.webContents.on('will-navigate', (e, url) => {
+    const ok = url.startsWith('file://') || (!!devServer && url.startsWith(devServer));
+    if (!ok) e.preventDefault();
+  });
 }
 
 /** Load a renderer entry in dev (vite server) or prod (built html). */
