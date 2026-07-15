@@ -6,6 +6,9 @@ import { Supervisor } from './supervisor/Supervisor.js';
 import { EchoBrain, DeferredBrain, type Brain } from './brain/Brain.js';
 import { createClaudeBackend, probeClaude } from './claude/createClaudeBackend.js';
 import { createWorkerKingToolServer, WORKERKING_TOOL_ALLOWLIST } from './claude/tools.js';
+import { createToolPolicy, summarizeToolCall } from './claude/toolPolicy.js';
+import { WsToolConfirmer } from './claude/WsToolConfirmer.js';
+import type { ToolPermissionMode } from '@workerking/shared';
 import { WsScreenContextProvider } from './screen/ScreenContextProvider.js';
 import { CapabilityManager } from './capability/CapabilityManager.js';
 import { realCapabilityQueryFn } from './capability/realCapabilityQuery.js';
@@ -166,12 +169,25 @@ async function resolveBrain(
     scheduleReminder,
     audit: (e) => log.child('tool').info(e.tool, { detail: e.detail }),
   });
+  // N1: gate the Claude Code toolset. Destructive tools (Bash/Write/Edit) are
+  // confirmed via a fail-closed UI round-trip in 'gated' mode (the default),
+  // denied outright in 'readonly', or unchecked in 'auto'. Read live from config.
+  const canUseTool = createToolPolicy({
+    mode: () => (config.get('toolPermissionMode') as ToolPermissionMode | undefined) ?? 'gated',
+    confirmer: new WsToolConfirmer(server),
+    summarize: summarizeToolCall,
+  });
+  // Autonomous background brains (nightly distiller, proactive watches) run with
+  // no user present to approve — force them read-only so a scheduled prompt can
+  // never run Bash/Write/Edit on its own.
+  const backgroundCanUseTool = createToolPolicy({ mode: () => 'readonly' });
   const claudeOpts = {
     cwd,
     // Live persona: re-read config (incl. character card) on every message.
     personaProvider: () => computePersonaAppend(config),
     mcpServers: { workerking: toolServer },
     allowedTools: WORKERKING_TOOL_ALLOWLIST,
+    canUseTool,
   };
 
   const startCapabilities = () => {
@@ -200,7 +216,7 @@ async function resolveBrain(
     // Nightly memory consolidation (Letta sleep-time), when memory is enabled.
     if (config.get('memoryEnabled') !== false) {
       const distiller = createClaudeDistiller((prompt) =>
-        createClaudeBackend({ cwd }).respond(prompt, () => {}),
+        createClaudeBackend({ cwd, canUseTool: backgroundCanUseTool }).respond(prompt, () => {}),
       );
       const job = new NightlyJob({ memory, log: interactionLog, distill: distiller });
       job.start();
@@ -210,7 +226,8 @@ async function resolveBrain(
     // Proactive/ambient watches (spends Claude quota on a timer) — opt-in.
     if (config.get('proactiveEnabled') === true) {
       const manager = new ProactiveManager({
-        respond: (prompt) => createClaudeBackend({ cwd }).respond(prompt, () => {}),
+        respond: (prompt) =>
+          createClaudeBackend({ cwd, canUseTool: backgroundCanUseTool }).respond(prompt, () => {}),
         notify: proactiveNotify,
         watches: composeWatches(watchStore),
       });

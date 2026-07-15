@@ -184,6 +184,15 @@ async function main(): Promise<void> {
     status.textContent = `connected (daemon ${env.payload.daemonVersion}, host ${env.payload.host})`;
   });
 
+  // N1: destructive-tool confirmation. The daemon asks before running a gated
+  // tool (Bash/Write/Edit); we surface a blocking prompt and reply. Fail-closed:
+  // anything other than an explicit OK denies.
+  client.on('tool.confirm_request', (env) => {
+    const { tool, summary } = env.payload;
+    const approved = window.confirm(`WorkerKing wants to ${summary}\n\n[${tool}] Allow this action?`);
+    client.send('tool.confirm_response', { approved }, { replyTo: env.id });
+  });
+
   // Settings panel and panel toggles.
   const bridge = (
     window as unknown as {

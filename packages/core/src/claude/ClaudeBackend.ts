@@ -38,6 +38,12 @@ export interface ClaudeBackendOptions {
   personaProvider?: () => string;
   /** Permission posture for autonomous tool use. Phase 1 keeps the default. */
   permissionMode?: Options['permissionMode'];
+  /**
+   * Per-call permission gate for the Claude Code toolset (N1). When set, the SDK
+   * asks it before running a tool that isn't pre-allowed — WorkerKing uses it to
+   * confirm/deny destructive tools (Bash/Write/Edit).
+   */
+  canUseTool?: Options['canUseTool'];
   /** Safety cap on turns per message. */
   maxTurns?: number;
   /** In-process SDK MCP servers (e.g. WorkerKing's screen-awareness tools). */
@@ -96,6 +102,7 @@ export class ClaudeBackend implements Brain {
       includePartialMessages: true,
       ...(this.opts.cwd ? { cwd: this.opts.cwd } : {}),
       ...(this.opts.permissionMode ? { permissionMode: this.opts.permissionMode } : {}),
+      ...(this.opts.canUseTool ? { canUseTool: this.opts.canUseTool } : {}),
       ...(this.opts.maxTurns ? { maxTurns: this.opts.maxTurns } : {}),
       ...(this.opts.mcpServers ? { mcpServers: this.opts.mcpServers } : {}),
       ...(this.opts.allowedTools ? { allowedTools: this.opts.allowedTools } : {}),
