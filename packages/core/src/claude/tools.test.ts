@@ -54,6 +54,33 @@ describe('screen-awareness tools', () => {
     expect(image?.data).toBe('ZmFrZS1wbmc=');
   });
 
+  it('requires consent before a screenshot when screenCaptureConsent is on (N15)', async () => {
+    const config = new ConfigStore({ screenAwareness: true, screenCaptureConsent: true });
+    const denied = await buildScreenTools({
+      config,
+      screen: canned,
+      confirmCapture: async () => false,
+    }).captureScreen.handler({ target: 'screen' }, undefined);
+    expect(denied.isError).toBe(true);
+    expect(textOf(denied)).toMatch(/declined/i);
+
+    const approved = await buildScreenTools({
+      config,
+      screen: canned,
+      confirmCapture: async () => true,
+    }).captureScreen.handler({ target: 'screen' }, undefined);
+    expect(approved.content.some((c) => c.type === 'image')).toBe(true);
+  });
+
+  it('fails closed when consent is on but no confirmer is wired (N15)', async () => {
+    const config = new ConfigStore({ screenAwareness: true, screenCaptureConsent: true });
+    const r = await buildScreenTools({ config, screen: canned }).captureScreen.handler(
+      { target: 'screen' },
+      undefined,
+    );
+    expect(r.isError).toBe(true);
+  });
+
   it('audits every call', async () => {
     const config = new ConfigStore({ screenAwareness: true });
     const events: string[] = [];

@@ -249,6 +249,8 @@ export const workerKingConfigSchema = z
     wakeWordEnabled: z.boolean(),
     /** Allow Claude to read the foreground window / screenshots; off by default. */
     screenAwareness: z.boolean(),
+    /** Require an explicit confirmation before each screenshot; off by default. */
+    screenCaptureConsent: z.boolean().optional(),
     /** Persist durable facts/preferences across sessions; on by default. */
     memoryEnabled: z.boolean(),
     /** Use local-embedding semantic recall (falls back to keyword); off by default. */
@@ -294,6 +296,7 @@ export const DEFAULT_CONFIG: WorkerKingConfig = {
   hotkey: 'Control+Shift+Space',
   wakeWordEnabled: false,
   screenAwareness: false,
+  screenCaptureConsent: false,
   memoryEnabled: true,
   semanticMemory: false,
   remindersEnabled: true,

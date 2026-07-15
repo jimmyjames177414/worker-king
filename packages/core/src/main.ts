@@ -185,9 +185,16 @@ async function resolveBrain(
   });
 
   // Screen-awareness + memory + proactive tools (capture runs in Electron main).
+  const captureConfirmer = new WsToolConfirmer(server);
   const toolServer = createWorkerKingToolServer({
     config,
     screen: new WsScreenContextProvider(server),
+    // N15: route per-capture consent through the same fail-closed UI prompt as N1.
+    confirmCapture: (req) =>
+      captureConfirmer.confirm({
+        tool: 'capture_screen',
+        summary: `take a screenshot of your ${req.target}`,
+      }),
     memory,
     memoryIndex,
     proactiveNotify,
