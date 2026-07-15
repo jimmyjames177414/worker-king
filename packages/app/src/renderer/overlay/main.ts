@@ -2,7 +2,7 @@ import { connectToDaemon } from '../shared/wsClient.js';
 import { AvatarController } from './AvatarController.js';
 import { Captions } from './Captions.js';
 import { VoiceHost } from './VoiceHost.js';
-import { WakeWordController, NullWakeWordDetector } from './WakeWord.js';
+import { WakeWordController, createWakeWordDetector } from './WakeWord.js';
 
 /**
  * Overlay renderer entry. Wires:
@@ -93,9 +93,9 @@ async function main(): Promise<VoiceHost | undefined> {
   });
 
   // Wake word (2.3, opt-in): when enabled in config, "Hey <name>" triggers the
-  // same session start as the hotkey. Detector is a no-op until a real model is
-  // installed (see WakeWord.ts).
-  const wake = new WakeWordController(new NullWakeWordDetector(), () => void voiceHost.toggle());
+  // same session start as the hotkey. The detector comes from the factory — a
+  // real openWakeWord model if installed, else a safe no-op (see WakeWord.ts).
+  const wake = new WakeWordController(await createWakeWordDetector(), () => void voiceHost.toggle());
   const applyWakeConfig = (enabled: unknown) => {
     if (enabled === true) void wake.enable().catch((e) => console.error('[wake] enable failed', e));
     else wake.disable();

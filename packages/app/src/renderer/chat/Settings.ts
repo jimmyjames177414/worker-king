@@ -32,6 +32,15 @@ export class Settings {
     const modelOpts = ['gpt-realtime-mini', 'gpt-realtime']
       .map((m) => `<option value="${m}" ${cfg.openaiModel === m ? 'selected' : ''}>${m}</option>`)
       .join('');
+    const providerOpts = [
+      ['gpt-realtime', 'OpenAI Realtime (cloud)'],
+      ['local-cascade', 'Local cascade (offline)'],
+    ]
+      .map(
+        ([v, label]) =>
+          `<option value="${v}" ${cfg.voiceProvider === v ? 'selected' : ''}>${label}</option>`,
+      )
+      .join('');
     const hostOpts = ['auto', 'windows', 'wsl']
       .map((h) => `<option value="${h}" ${cfg.claudeHost === h ? 'selected' : ''}>${h}</option>`)
       .join('');
@@ -40,6 +49,7 @@ export class Settings {
       <label>Assistant name<input data-cfg="assistantName" value="${str('assistantName')}"></label>
       <label>Your name<input data-cfg="userName" value="${str('userName')}" placeholder="how it addresses you"></label>
       <label>Personality<textarea data-cfg="personality" rows="3">${str('personality')}</textarea></label>
+      <label>Voice engine<select data-cfg="voiceProvider">${providerOpts}</select></label>
       <label>Voice model<select data-cfg="openaiModel">${modelOpts}</select></label>
       <label>Claude host<select data-cfg="claudeHost">${hostOpts}</select></label>
       <label>Push-to-talk hotkey<input data-cfg="hotkey" value="${str('hotkey')}"></label>

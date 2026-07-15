@@ -32,14 +32,63 @@ export class NullWakeWordDetector implements WakeWordDetector {
   }
 }
 
+/**
+ * Build the active wake-word detector. Tries an optional openWakeWord adapter
+ * (onnxruntime-web + a "hey jarvis"/custom model) via dynamic import — the same
+ * optional-dependency pattern the local-voice engines use — and falls back to a
+ * detector that never fires when it isn't installed. So enabling the feature
+ * without a model is a safe no-op rather than a crash; dropping the model in is
+ * the remaining Windows+mic step, with no code change here.
+ */
+export async function createWakeWordDetector(): Promise<WakeWordDetector> {
+  try {
+    // Indirect specifier so the optional package isn't a static build/typecheck dep.
+    const mod = (await optionalImport('@workerking/wakeword-openwakeword')) as {
+      createDetector(): WakeWordDetector;
+    };
+    return mod.createDetector();
+  } catch {
+    return new NullWakeWordDetector();
+  }
+}
+
+/** Import an optional package by name; the variable specifier keeps it off the build graph. */
+function optionalImport(name: string): Promise<unknown> {
+  return import(/* @vite-ignore */ name);
+}
+
 const FRAME_SIZE = 1280; // openWakeWord's expected hop @ 16 kHz
+
+/**
+ * Accumulates arbitrary-length audio input and emits fixed-size frames. The mic
+ * tap delivers ~2048-sample buffers, but wake-word models expect a specific hop
+ * (1280 @ 16 kHz), so samples must be re-chunked across buffer boundaries.
+ */
+export class FrameChunker {
+  private buffer: number[] = [];
+  constructor(private readonly frameSize: number) {}
+
+  /** Push input samples; return any complete frames now available. */
+  push(input: Float32Array): Float32Array[] {
+    for (let i = 0; i < input.length; i++) this.buffer.push(input[i]);
+    const frames: Float32Array[] = [];
+    while (this.buffer.length >= this.frameSize) {
+      frames.push(Float32Array.from(this.buffer.splice(0, this.frameSize)));
+    }
+    return frames;
+  }
+
+  reset(): void {
+    this.buffer = [];
+  }
+}
 
 export class WakeWordController {
   private stream?: MediaStream;
   private ctx?: AudioContext;
   private node?: ScriptProcessorNode;
   private enabled = false;
-  private buffer: number[] = [];
+  private readonly chunker = new FrameChunker(FRAME_SIZE);
 
   constructor(
     private readonly detector: WakeWordDetector,
@@ -54,7 +103,7 @@ export class WakeWordController {
     if (this.enabled) return;
     this.enabled = true;
     this.detector.reset();
-    this.buffer = [];
+    this.chunker.reset();
 
     this.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     // 16 kHz to match wake-word models.
@@ -69,13 +118,11 @@ export class WakeWordController {
   }
 
   private onAudio(input: Float32Array): void {
-    // Re-chunk the input into FRAME_SIZE frames for the detector.
-    for (let i = 0; i < input.length; i++) this.buffer.push(input[i]);
-    while (this.buffer.length >= FRAME_SIZE) {
-      const frame = Float32Array.from(this.buffer.splice(0, FRAME_SIZE));
+    // Re-chunk the mic buffer into FRAME_SIZE frames for the detector.
+    for (const frame of this.chunker.push(input)) {
       if (this.detector.process(frame)) {
         this.detector.reset();
-        this.buffer = [];
+        this.chunker.reset();
         this.onWake();
         return;
       }
@@ -90,6 +137,6 @@ export class WakeWordController {
     this.ctx = undefined;
     this.stream?.getTracks().forEach((t) => t.stop());
     this.stream = undefined;
-    this.buffer = [];
+    this.chunker.reset();
   }
 }
