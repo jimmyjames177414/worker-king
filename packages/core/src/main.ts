@@ -6,7 +6,7 @@ import { ConfigStore } from './config/ConfigStore.js';
 import { Supervisor } from './supervisor/Supervisor.js';
 import { EchoBrain, DeferredBrain, type Brain } from './brain/Brain.js';
 import { createClaudeBackend, probeClaude } from './claude/createClaudeBackend.js';
-import { createWorkerKingToolServer, WORKERKING_TOOL_ALLOWLIST } from './claude/tools.js';
+import { createWorkerKingToolServer, untrusted, WORKERKING_TOOL_ALLOWLIST } from './claude/tools.js';
 import { createToolPolicy, summarizeToolCall } from './claude/toolPolicy.js';
 import { WsToolConfirmer } from './claude/WsToolConfirmer.js';
 import type { ToolPermissionMode } from '@workerking/shared';
@@ -81,6 +81,12 @@ export interface StartDaemonOptions {
   brainMode?: 'auto' | 'claude' | 'echo';
   /** Inject stores (tests point these at a temp dir); real ones built otherwise. */
   deps?: Partial<DaemonDeps>;
+  /**
+   * Inject the config store (tests use an in-memory one). Default is the real
+   * file-persisted store under ~/.claude/workerking — which a test must never
+   * touch.
+   */
+  config?: ConfigStore;
 }
 
 export interface RunningDaemon {
@@ -126,7 +132,12 @@ function buildAmbientContext(ctx: PersonaContext): string {
   if (ctx.cwd) lines.push(`Active project: ${basename(ctx.cwd)} (${ctx.cwd}).`);
   const summary = ctx.conversations?.currentSummary();
   if (summary) {
-    lines.push(`Earlier in this conversation (summarized, scrolled out of context): ${summary}`);
+    // The rolling summary is derived from prior chat turns — treat it as data,
+    // not instructions, same as any other externally influenced content.
+    lines.push(
+      'Earlier in this conversation (summarized, scrolled out of context):\n' +
+        untrusted('conversation-summary', summary),
+    );
   }
   return lines.length ? `Ambient context:\n${lines.join('\n')}` : '';
 }
@@ -149,7 +160,11 @@ export function computePersonaAppend(config: ConfigStore, ctx: PersonaContext = 
   const parts = [base, SELF_AUTHOR_NUDGE];
   if (ctx.memory && config.get('memoryEnabled') !== false) {
     const mem = ctx.memory.summary();
-    if (mem) parts.push(mem);
+    // Memories are writable via the no-prompt `remember` tool, so a
+    // prompt-injected turn can persist arbitrary text here. Fence it exactly
+    // like the recall tool results do — unfenced, this system-prompt injection
+    // point would be the strongest persistence channel in the product.
+    if (mem) parts.push(untrusted('remembered-facts', mem));
   }
   parts.push(buildAmbientContext(ctx));
   return parts.filter(Boolean).join('\n\n');
@@ -337,7 +352,7 @@ export async function startDaemon(opts: StartDaemonOptions = {}): Promise<Runnin
   const host = detectHost();
 
   // Headless daemon: persist config so a standalone run doesn't reset on restart.
-  const config = new ConfigStore(undefined, { persist: true });
+  const config = opts.config ?? new ConfigStore(undefined, { persist: true });
   const server = new WsServer({ token, host, daemonVersion: DAEMON_VERSION });
   // Stores are injected (tests) or built here — never module-global.
   const deps = createDaemonDeps(opts.deps);
@@ -372,7 +387,13 @@ export async function startDaemon(opts: StartDaemonOptions = {}): Promise<Runnin
       (d) => disposables.push(d),
       deps,
       proactiveHolder,
-    ).catch(() => {});
+    ).catch((err) => {
+      // Never silent: without this log a boot-time failure (bad watch, memory
+      // index init, …) is invisible; without the fallback every chat message
+      // would await the never-resolving DeferredBrain forever.
+      log.error('brain resolution failed', { error: String(err) });
+      if (!deferred.isReady()) deferred.set(new EchoBrain());
+    });
   }
   new Supervisor(
     server,

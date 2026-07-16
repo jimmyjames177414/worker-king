@@ -69,17 +69,21 @@ const hotkeys = new HotkeyManager(globalShortcut, {
   pushToTalk: () => overlay?.webContents.send('wk:push-to-talk'),
   explain: () => explainSelection(),
 });
-/** Bind push-to-talk, warning if the accelerator is already taken. */
-function registerHotkey(accelerator: string): void {
-  if (!hotkeys.setPushToTalk(accelerator)) {
-    process.stderr.write(`[workerking] failed to register hotkey "${accelerator}" (already taken)\n`);
+/** Bind push-to-talk, warning if the accelerator is invalid or already taken. */
+function registerHotkey(accelerator: string): boolean {
+  const ok = hotkeys.setPushToTalk(accelerator);
+  if (!ok) {
+    process.stderr.write(`[workerking] failed to register hotkey "${accelerator}" (invalid or taken)\n`);
   }
+  return ok;
 }
-/** Bind the explain-selection shortcut, warning if taken. */
-function registerExplainHotkey(accelerator: string): void {
-  if (!hotkeys.setExplain(accelerator)) {
-    process.stderr.write(`[workerking] failed to register explain hotkey "${accelerator}" (already taken)\n`);
+/** Bind the explain-selection shortcut, warning if invalid or taken. */
+function registerExplainHotkey(accelerator: string): boolean {
+  const ok = hotkeys.setExplain(accelerator);
+  if (!ok) {
+    process.stderr.write(`[workerking] failed to register explain hotkey "${accelerator}" (invalid or taken)\n`);
   }
+  return ok;
 }
 
 async function resolveDaemonMode(): Promise<'windows' | 'wsl'> {
@@ -102,7 +106,13 @@ async function boot(): Promise<void> {
     process.stderr.write(`[daemon] restart attempt ${attempt} in ${delayMs}ms\n`),
   );
   supervisor.on('restarted', (conn: DaemonConnection) => {
+    // Every restart mints a new port + token: re-point main's client at the new
+    // endpoint and tell the renderers to reconnect (their WsClients re-fetch
+    // the connection over wk:get-connection, which reads `connection`).
     connection = conn;
+    daemonClient?.updateConnection(conn);
+    overlay?.webContents.send('wk:reconnect');
+    chat?.webContents.send('wk:reconnect');
   });
   // Crash-loop budget exhausted: stop thrashing and tell the user.
   supervisor.on('fatal', (err: Error) => {
@@ -158,10 +168,12 @@ async function boot(): Promise<void> {
     },
     // Persist a config change and forward it to the daemon (live reload).
     setConfig: (key, value) => {
+      // Hotkeys bind first and only persist on success — an invalid/taken
+      // accelerator written to config would otherwise break every boot.
+      if (key === 'hotkey' && typeof value === 'string' && !registerHotkey(value)) return;
+      if (key === 'explainHotkey' && typeof value === 'string' && !registerExplainHotkey(value)) return;
       config.set(key, value as WorkerKingConfig[keyof WorkerKingConfig]);
       daemonClient?.send('config.set', { key, value });
-      if (key === 'hotkey' && typeof value === 'string') registerHotkey(value);
-      if (key === 'explainHotkey' && typeof value === 'string') registerExplainHotkey(value);
     },
     // Right-click on the avatar surfaces the chat window.
     onOpenChat: () => {
@@ -195,8 +207,14 @@ async function boot(): Promise<void> {
     },
   });
 
-  registerHotkey(config.get('hotkey'));
-  registerExplainHotkey(config.get('explainHotkey'));
+  // A bad persisted accelerator must never kill boot: HotkeyManager already
+  // swallows register() throws, but belt-and-braces — log and continue unbound.
+  try {
+    registerHotkey(config.get('hotkey'));
+    registerExplainHotkey(config.get('explainHotkey'));
+  } catch (err) {
+    process.stderr.write(`[workerking] hotkey registration failed: ${String(err)}\n`);
+  }
 
   // After sleep, WSL2's localhost forwarding (and sometimes native sockets) can
   // drop. Proactively heal: reconnect main's daemon client, re-push config, and

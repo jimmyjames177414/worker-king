@@ -146,6 +146,13 @@ export class WsServer {
     // entry, and only `hello` is accepted.
     let client: WsClient | undefined;
 
+    // Pre-hello sockets have no heartbeat entry, so without this bound a peer
+    // that connects and never authenticates would hold its connection forever.
+    const handshakeTimer = setTimeout(() => {
+      if (!client) socket.terminate();
+    }, 10_000);
+    handshakeTimer.unref?.();
+
     socket.on('message', (data) => {
       let env: WsEnvelope;
       try {
@@ -170,6 +177,7 @@ export class WsServer {
           socket.close(4003, 'invalid token');
           return;
         }
+        clearTimeout(handshakeTimer);
         client = this.registerClient(socket, env.payload.role);
         client.send('welcome', {
           connectionId: client.connectionId,
@@ -199,6 +207,7 @@ export class WsServer {
     });
 
     socket.on('close', () => {
+      clearTimeout(handshakeTimer);
       if (client) this.dropClient(client.connectionId);
     });
     socket.on('error', () => {
@@ -276,11 +285,25 @@ export class WsServer {
     return new Promise((resolve) => {
       if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
       this.heartbeatTimer = undefined;
-      for (const c of this.clients.values()) c.raw.close(1001, 'shutdown');
+      const sockets = [...this.clients.values()].map((c) => c.raw);
+      for (const s of sockets) s.close(1001, 'shutdown');
       this.clients.clear();
       this.heartbeats.clear();
-      if (this.wss) this.wss.close(() => resolve());
-      else resolve();
+      // `wss.close` waits for every socket to finish its close handshake — a
+      // dead peer would hang shutdown (and a second Ctrl-C would re-enter the
+      // same hang). Force-terminate stragglers after a short grace period.
+      const grace = setTimeout(() => {
+        for (const s of sockets) s.terminate();
+      }, 2000);
+      grace.unref?.();
+      if (this.wss) {
+        this.wss.close(() => {
+          clearTimeout(grace);
+          resolve();
+        });
+      } else {
+        resolve();
+      }
     });
   }
 }

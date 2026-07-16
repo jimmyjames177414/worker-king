@@ -15,6 +15,14 @@ export interface Brain extends TaskRunner {
    * Resolves with the full final text.
    */
   respond(text: string, onDelta: (delta: string) => void): Promise<string>;
+  /**
+   * Drop conversation continuity so the next message starts a fresh session.
+   * Wired to history.new / history.load — without it, "New chat" only switches
+   * the transcript while the model keeps the old context.
+   */
+  resetSession?(): void;
+  /** Token/cost usage from the most recent completed turn, if tracked (N9). */
+  getLastUsage?(): unknown;
 }
 
 /**
@@ -56,6 +64,17 @@ export class DeferredBrain implements Brain {
   async run(prompt: string, events: TaskRunEvents, signal: AbortSignal): Promise<void> {
     const brain = await this.waitForBrain();
     return brain.run(prompt, events, signal);
+  }
+
+  // Delegate the optional surface to the installed brain — in production the
+  // Supervisor only ever holds this wrapper, so without these the real brain's
+  // session reset and usage tracking would be unreachable (dead features).
+  resetSession(): void {
+    this.brain?.resetSession?.();
+  }
+
+  getLastUsage(): unknown {
+    return this.brain?.getLastUsage?.();
   }
 }
 

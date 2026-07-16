@@ -1,4 +1,5 @@
-import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
+import { writeJsonAtomic } from '../util/atomicJson.js';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { Task } from '@workerking/shared';
@@ -43,7 +44,13 @@ export class TaskStore {
     if (!existsSync(this.path)) return;
     try {
       const parsed = JSON.parse(readFileSync(this.path, 'utf8'));
-      if (Array.isArray(parsed?.tasks)) this.tasks = parsed.tasks;
+      // Keep only structurally sound records — a hand-edited entry must not
+      // crash reconcileOnBoot()/list() later.
+      if (Array.isArray(parsed?.tasks)) {
+        this.tasks = (parsed.tasks as Task[]).filter(
+          (t) => !!t && typeof t === 'object' && typeof t.id === 'string' && typeof t.state === 'string',
+        );
+      }
     } catch {
       // Corrupt file → start fresh; the next write repairs it.
     }
@@ -51,8 +58,7 @@ export class TaskStore {
 
   private persist(): void {
     try {
-      mkdirSync(join(this.path, '..'), { recursive: true });
-      writeFileSync(this.path, JSON.stringify({ tasks: this.tasks }, null, 2), 'utf8');
+      writeJsonAtomic(this.path, { tasks: this.tasks });
     } catch {
       // Best-effort; task records must never crash the daemon.
     }

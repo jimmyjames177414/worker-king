@@ -1,7 +1,9 @@
-import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { Cron } from 'croner';
 import type { Watch } from '@workerking/shared';
+import { writeJsonAtomic } from '../util/atomicJson.js';
 
 /**
  * WatchStore — durable, user-defined proactive watches.
@@ -18,9 +20,34 @@ export interface WatchStoreOptions {
   newId?: () => string;
 }
 
-/** A cron expression is valid enough if it has 5 whitespace-separated fields. */
+/**
+ * A cron expression is valid iff croner (the scheduler that will actually run
+ * it) can parse it. Field-count alone is not enough: `"0 25 * * *"` has five
+ * fields but throws at schedule time, and a persisted throwing watch would
+ * poison every subsequent boot/reload of the ProactiveManager.
+ */
 export function isValidCron(expr: string): boolean {
-  return expr.trim().split(/\s+/).length === 5;
+  if (expr.trim().split(/\s+/).length !== 5) return false;
+  try {
+    // No callback → croner only parses the pattern; nothing is scheduled.
+    new Cron(expr).stop();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Keep only entries a schedule pass can safely consume (hand-edited files). */
+function isValidWatch(w: unknown): w is Watch {
+  const x = w as Watch;
+  return (
+    !!x &&
+    typeof x === 'object' &&
+    typeof x.id === 'string' &&
+    typeof x.prompt === 'string' &&
+    typeof x.cron === 'string' &&
+    isValidCron(x.cron)
+  );
 }
 
 export class WatchStore {
@@ -33,7 +60,11 @@ export class WatchStore {
     const dir = opts.dir ?? join(homedir(), '.claude', 'workerking');
     this.path = join(dir, 'watches.json');
     this.now = opts.now ?? (() => Date.now());
-    this.newId = opts.newId ?? (() => `watch-${Math.floor(this.now())}-${this.watches.length}`);
+    // Random suffix: an add/remove/add within one ms must not reuse an id
+    // (a length-based suffix would, and remove(id) would then hit the wrong watch).
+    this.newId =
+      opts.newId ??
+      (() => `watch-${Math.floor(this.now())}-${Math.random().toString(36).slice(2, 8)}`);
     this.load();
   }
 
@@ -41,7 +72,9 @@ export class WatchStore {
     if (!existsSync(this.path)) return;
     try {
       const parsed = JSON.parse(readFileSync(this.path, 'utf8'));
-      if (Array.isArray(parsed?.watches)) this.watches = parsed.watches;
+      // Validate each entry: a hand-edited/corrupt watch (bad cron, missing
+      // fields) must not reach the scheduler, where it would throw at boot.
+      if (Array.isArray(parsed?.watches)) this.watches = parsed.watches.filter(isValidWatch);
     } catch {
       // Corrupt file → start empty; the next write repairs it.
     }
@@ -49,8 +82,7 @@ export class WatchStore {
 
   private persist(): void {
     try {
-      mkdirSync(join(this.path, '..'), { recursive: true });
-      writeFileSync(this.path, JSON.stringify({ watches: this.watches }, null, 2), 'utf8');
+      writeJsonAtomic(this.path, { watches: this.watches });
     } catch {
       // Best-effort; never crash the daemon over a watch write.
     }

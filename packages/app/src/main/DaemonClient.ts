@@ -28,7 +28,7 @@ export class DaemonClient {
   private reconnectTimer?: ReturnType<typeof setTimeout>;
   private readonly handlers = new Map<WsMessageKind, (env: WsEnvelope) => void>();
 
-  constructor(private readonly conn: DaemonConnection) {}
+  constructor(private conn: DaemonConnection) {}
 
   on<K extends WsMessageKind>(kind: K, handler: (env: WsEnvelope<K>) => void): void {
     this.handlers.set(kind, handler as (env: WsEnvelope) => void);
@@ -36,6 +36,19 @@ export class DaemonClient {
 
   connect(): void {
     this.closedByUser = false;
+    this.open();
+  }
+
+  /**
+   * Adopt a new connection after a supervisor restart — every restart mints a
+   * fresh port + token, so the old socket (and any reconnect loop pointed at
+   * it) is dead by definition. Unconditionally redials the new endpoint;
+   * open() tears down whatever socket/timer was still live.
+   */
+  updateConnection(conn: DaemonConnection): void {
+    this.conn = conn;
+    this.closedByUser = false;
+    this.reconnectDelay = 500;
     this.open();
   }
 

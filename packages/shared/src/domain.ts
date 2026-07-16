@@ -314,13 +314,41 @@ export const CONFIG_KEYS = Object.keys(workerKingConfigSchema.shape) as Array<
   keyof WorkerKingConfig
 >;
 
+/** Keys that must never be assigned onto a config object (prototype pollution). */
+const FORBIDDEN_CONFIG_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
+/**
+ * Validate one config value against the schema field for `key`. Unknown keys
+ * are accepted as-is (the store historically allows arbitrary keys); known keys
+ * must match their schema type; forbidden keys are always rejected.
+ */
+export function validateConfigValue(
+  key: string,
+  value: unknown,
+): { ok: true; value: unknown } | { ok: false } {
+  if (FORBIDDEN_CONFIG_KEYS.has(key)) return { ok: false };
+  const field = (workerKingConfigSchema.shape as Record<string, z.ZodTypeAny>)[key];
+  if (!field) return { ok: true, value };
+  const result = field.safeParse(value);
+  return result.success ? { ok: true, value: result.data } : { ok: false };
+}
+
 /**
  * Validate a loaded/partial config blob against the schema, dropping keys with
  * the wrong type rather than trusting the file wholesale ("config is code
  * execution" — never load a config you didn't validate). Returns the subset of
  * recognized, well-typed values; unknown keys pass through.
+ *
+ * Salvage is per-key on purpose: an all-or-nothing safeParse would let ONE
+ * mistyped key silently wipe every other setting back to defaults on the next
+ * boot.
  */
 export function parseConfig(input: unknown): Partial<WorkerKingConfig> {
-  const result = workerKingConfigSchema.partial().passthrough().safeParse(input);
-  return result.success ? (result.data as Partial<WorkerKingConfig>) : {};
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return {};
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(input as Record<string, unknown>)) {
+    const checked = validateConfigValue(key, value);
+    if (checked.ok) out[key] = checked.value;
+  }
+  return out as Partial<WorkerKingConfig>;
 }

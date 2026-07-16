@@ -27,17 +27,30 @@ export interface ClaudeHealth {
  * so a hung spawn can never block daemon startup.
  */
 export async function probeClaude(cwd?: string, timeoutMs = 8000): Promise<ClaudeHealth> {
+  const warmPromise = startup({
+    initializeTimeoutMs: timeoutMs,
+    options: cwd ? { cwd } : {},
+  });
   try {
-    const warmPromise = startup({
-      initializeTimeoutMs: timeoutMs,
-      options: cwd ? { cwd } : {},
-    });
     const warm = await withTimeout(warmPromise, timeoutMs + 1000, 'probe timed out');
     // `startup` resolves once the subprocess is initialized and authenticated.
     // Close it immediately; boot spawns the working session lazily on first use.
     warm.close();
     return { ok: true };
   } catch (err) {
+    // On timeout the underlying startup keeps running; when it eventually
+    // resolves, close it — otherwise the warmed subprocess is orphaned for the
+    // daemon's whole lifetime.
+    warmPromise.then(
+      (w) => {
+        try {
+          w.close();
+        } catch {
+          // already closed/dead
+        }
+      },
+      () => {},
+    );
     return { ok: false, detail: err instanceof Error ? err.message : String(err) };
   }
 }

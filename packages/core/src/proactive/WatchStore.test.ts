@@ -24,6 +24,13 @@ describe('isValidCron', () => {
     expect(isValidCron('* * * *')).toBe(false);
     expect(isValidCron('not a cron')).toBe(false);
   });
+  it('rejects 5-field garbage the scheduler would throw on', () => {
+    // Field count alone is not validation: these have 5 fields but croner
+    // rejects them, and a persisted throwing watch poisons every boot.
+    expect(isValidCron('not a cron at all')).toBe(false);
+    expect(isValidCron('0 25 * * *')).toBe(false);
+    expect(isValidCron('* * * * 9')).toBe(false);
+  });
 });
 
 describe('WatchStore', () => {

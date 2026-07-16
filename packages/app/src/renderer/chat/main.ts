@@ -189,6 +189,11 @@ async function main(): Promise<void> {
   // anything other than an explicit OK denies.
   client.on('tool.confirm_request', (env) => {
     const { tool, summary } = env.payload;
+    // Voice-first usage: this window may never have been opened. Surface it
+    // first — a confirm dialog in a hidden window silently times out to deny.
+    (
+      window as unknown as { workerking?: { showWindow?: () => void } }
+    ).workerking?.showWindow?.();
     const approved = window.confirm(`WorkerKing wants to ${summary}\n\n[${tool}] Allow this action?`);
     client.send('tool.confirm_response', { approved }, { replyTo: env.id });
   });

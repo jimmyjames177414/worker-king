@@ -63,6 +63,8 @@ export class ProactiveManager {
   private crons: Array<{ stop: () => void }> = [];
   private watches: Watch[];
   private running = false;
+  /** Watches with a tick already in flight — a slow Claude call must not stack. */
+  private readonly inFlight = new Set<string>();
   private readonly makeCron: (expr: string, cb: () => void) => { stop: () => void };
 
   constructor(private readonly deps: ProactiveManagerDeps) {
@@ -73,9 +75,7 @@ export class ProactiveManager {
 
   start(): void {
     this.running = true;
-    for (const watch of this.watches) {
-      this.crons.push(this.makeCron(watch.cron, () => void this.tick(watch)));
-    }
+    this.schedule();
   }
 
   /** Replace the scheduled watches at runtime (add/remove), rescheduling if running. */
@@ -84,17 +84,36 @@ export class ProactiveManager {
     if (!this.running) return;
     for (const c of this.crons) c.stop();
     this.crons = [];
+    this.schedule();
+  }
+
+  /**
+   * Schedule every watch, skipping (not throwing on) any whose cron the
+   * scheduler rejects — one bad persisted watch must not take down the daemon
+   * or unschedule the watches after it.
+   */
+  private schedule(): void {
     for (const watch of this.watches) {
-      this.crons.push(this.makeCron(watch.cron, () => void this.tick(watch)));
+      try {
+        this.crons.push(this.makeCron(watch.cron, () => void this.tick(watch)));
+      } catch {
+        // Invalid cron (e.g. hand-edited watches.json) → skip this watch.
+      }
     }
   }
 
   private async tick(watch: Watch): Promise<void> {
+    // Overlap guard: a watch whose Claude call outlasts its interval would
+    // otherwise stack unbounded concurrent background runs (quota on a timer).
+    if (this.inFlight.has(watch.id)) return;
+    this.inFlight.add(watch.id);
     try {
       const text = await runWatch(watch, this.deps.respond);
       if (text) this.deps.notify({ text, speak: true, source: `watch:${watch.id}` });
     } catch {
       // A failed watch shouldn't crash the daemon; stay quiet.
+    } finally {
+      this.inFlight.delete(watch.id);
     }
   }
 

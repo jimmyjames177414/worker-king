@@ -49,19 +49,18 @@ export class VoiceHost {
     this.ws.send('config.get', { key: 'openaiModel' });
     this.ws.send('config.get', { key: 'voiceProvider' });
 
-    // Spoken progress + final results from delegated tasks (turn-gated inside the
-    // provider so they don't collide with the user speaking).
+    // Spoken progress + final results from delegated tasks. Routed through the
+    // same serialized speak chain as streamed reply sentences — injecting the
+    // provider directly here would overlap a sentence that is already playing.
     this.ws.on('task.progress', (env) => {
-      void this.provider?.injectAssistantContext(env.payload.progress.text);
+      this.enqueueSpeech(env.payload.progress.text);
     });
     this.ws.on('task.done', (env) => {
       const summary = env.payload.task.result?.summary;
-      if (summary) void this.provider?.injectAssistantContext(summary, { speakNow: true });
+      if (summary) this.enqueueSpeech(summary);
     });
     this.ws.on('task.error', (env) => {
-      void this.provider?.injectAssistantContext(`That task ran into a problem: ${env.payload.error}`, {
-        speakNow: true,
-      });
+      this.enqueueSpeech(`That task ran into a problem: ${env.payload.error}`);
     });
 
     this.bridge.onPushToTalk(() => void this.toggle());
@@ -103,6 +102,11 @@ export class VoiceHost {
     ];
   }
 
+  /** Bumped by stop(); a start still in flight when it changes must tear down. */
+  private startEpoch = 0;
+  /** The in-flight start(), so stop() can wait for it instead of racing it. */
+  private startPromise?: Promise<void>;
+
   async toggle(): Promise<void> {
     if (this.active) await this.stop();
     else await this.start();
@@ -110,14 +114,37 @@ export class VoiceHost {
 
   /** Speak text aloud if a voice session is active (proactive notices, explain replies). */
   async speak(text: string): Promise<void> {
-    if (this.provider) await this.provider.injectAssistantContext(text, { speakNow: true });
+    this.enqueueSpeech(text);
+    await this.speakChain;
+  }
+
+  /**
+   * Append out-of-band speech (task progress, proactive notices) to the same
+   * serialized chain as streamed reply sentences — the single queue is what
+   * keeps two utterances from ever playing over each other.
+   */
+  private enqueueSpeech(text: string): void {
+    this.speakChain = this.speakChain
+      .then(async () => {
+        await this.provider?.injectAssistantContext(text, { speakNow: true });
+      })
+      .catch(() => {});
   }
 
   private async start(): Promise<void> {
+    if (this.active) return;
     this.active = true;
+    const myStart = ++this.startEpoch;
+    this.startPromise = this.doStart(myStart);
+    await this.startPromise;
+  }
+
+  private async doStart(myStart: number): Promise<void> {
     const cascade = this.providerId === 'local-cascade';
     const { GptRealtimeProvider, createLocalCascadeProvider, createRealtimeSessionFactory } =
       await import('@workerking/voice-providers');
+    // stop() during the dynamic import: bail before creating anything live.
+    if (myStart !== this.startEpoch) return;
     const provider: VoiceProvider = cascade
       ? createLocalCascadeProvider()
       : new GptRealtimeProvider({
@@ -143,8 +170,12 @@ export class VoiceHost {
             // reply (GPT Realtime speaks on its own, so no routing there).
             if (cascade && final && text.trim()) void this.handleCascadeTurn(text);
           },
-          onAssistantTranscript: (text, final) =>
-            this.ws.send('voice.transcript', { role: 'assistant', text, final }),
+          onAssistantTranscript: (text, final) => {
+            // Cascade replies already reach the chat via chat.assistant_delta/
+            // done; re-emitting each spoken sentence here would render (and
+            // persist) every answer twice — once whole, once per sentence.
+            if (!cascade) this.ws.send('voice.transcript', { role: 'assistant', text, final });
+          },
           onStateChange: (state) => this.ws.send('voice.state', { state }),
           onSpeechStart: () => {
             // Barge-in: invalidate any in-flight/queued reply so a now-stale
@@ -158,9 +189,16 @@ export class VoiceHost {
           },
         },
       });
+      // stop() while the session was coming up: it found no provider to stop,
+      // so tear down the one we just started — otherwise the mic stays hot
+      // while the avatar shows idle.
+      if (myStart !== this.startEpoch) {
+        await provider.stop();
+        if (this.provider === provider) this.provider = undefined;
+      }
     } catch (err) {
       this.active = false;
-      this.provider = undefined;
+      if (this.provider === provider) this.provider = undefined;
       this.ws.send('voice.state', { state: 'error' });
       console.error('[voice] failed to start', err);
     }
@@ -240,9 +278,14 @@ export class VoiceHost {
   }
 
   async stop(): Promise<void> {
+    // Invalidate any start still in flight, then wait for it to settle so the
+    // provider reference (if it got assigned) is the one we stop — a bare stop
+    // during start used to leave the just-created session live and orphaned.
+    this.startEpoch++;
+    this.active = false;
+    await this.startPromise?.catch(() => {});
     await this.provider?.stop();
     this.provider = undefined;
-    this.active = false;
     this.ws.send('voice.state', { state: 'idle' });
   }
 }

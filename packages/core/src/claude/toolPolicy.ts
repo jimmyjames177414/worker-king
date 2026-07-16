@@ -28,6 +28,34 @@ export function isMutatingTool(toolName: string): boolean {
   return MUTATING_TOOLS.has(toolName);
 }
 
+/**
+ * Built-in tools known to be read-only. Everything else that isn't an MCP tool
+ * is treated as mutating in `readonly` mode — a deny-list alone fails *open*
+ * for any tool the SDK adds or renames later, which is the opposite of the
+ * fail-closed posture this module promises. MCP tools (`mcp__*`) stay allowed:
+ * they're servers the user configured themselves (and WorkerKing's own).
+ */
+export const READONLY_SAFE_TOOLS = new Set([
+  'Read',
+  'Glob',
+  'Grep',
+  'LS',
+  'WebFetch',
+  'WebSearch',
+  'Task',
+  'TodoRead',
+  'TodoWrite',
+  'NotebookRead',
+  'BashOutput',
+  'ListMcpResourcesTool',
+  'ReadMcpResourceTool',
+]);
+
+/** In `readonly` mode: allow known-read-only builtins and MCP tools; deny the rest. */
+export function isReadonlySafe(toolName: string): boolean {
+  return READONLY_SAFE_TOOLS.has(toolName) || toolName.startsWith('mcp__');
+}
+
 /** Asks a UI client to approve a destructive tool call (fail-closed on no answer). */
 export interface ToolConfirmer {
   confirm(req: { tool: string; summary: string }): Promise<boolean>;
@@ -48,7 +76,10 @@ export interface ToolPolicyOptions {
 /** Default one-line summary of a tool call for the confirmation prompt. */
 export function summarizeToolCall(tool: string, input: Record<string, unknown>): string {
   if (tool === 'Bash' && typeof input.command === 'string') {
-    return `Run a shell command: ${truncate(input.command, 160)}`;
+    // The user approves exactly this text — a tight cap would let a long
+    // command hide its dangerous tail behind the ellipsis. Show generously and
+    // make any elision loud.
+    return `Run a shell command: ${truncate(input.command, 1000)}`;
   }
   const path = input.file_path ?? input.path ?? input.notebook_path;
   if (typeof path === 'string') return `${tool} ${path}`;
@@ -56,7 +87,7 @@ export function summarizeToolCall(tool: string, input: Record<string, unknown>):
 }
 
 function truncate(s: string, n: number): string {
-  return s.length > n ? `${s.slice(0, n - 1)}…` : s;
+  return s.length > n ? `${s.slice(0, n)}… [TRUNCATED — full command is ${s.length} chars]` : s;
 }
 
 /**
@@ -76,9 +107,11 @@ export function createToolPolicy(opts: ToolPolicyOptions) {
   ): Promise<ToolDecision> {
     const mode = opts.mode();
     if (mode === 'auto') return { behavior: 'allow' };
-    if (!isMutatingTool(toolName)) return { behavior: 'allow' };
 
     if (mode === 'readonly') {
+      // Allowlist, not deny-list: an unknown/future built-in tool must fail
+      // closed here — readonly guards *unattended* runs (nightly, watches).
+      if (isReadonlySafe(toolName)) return { behavior: 'allow' };
       return {
         behavior: 'deny',
         message:
@@ -86,6 +119,8 @@ export function createToolPolicy(opts: ToolPolicyOptions) {
           'Tell the user they can allow edits in settings (toolPermissionMode).',
       };
     }
+
+    if (!isMutatingTool(toolName)) return { behavior: 'allow' };
 
     // gated: require an explicit, fail-closed approval.
     if (!opts.confirmer) {

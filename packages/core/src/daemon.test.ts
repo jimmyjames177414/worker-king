@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { WebSocket } from 'ws';
 import {
@@ -9,7 +12,14 @@ import {
   type PayloadOf,
   type EnvelopeContext,
 } from '@workerking/shared';
-import { startDaemon, type RunningDaemon } from './main.js';
+import { startDaemon, createDaemonDeps, type RunningDaemon } from './main.js';
+import { ConfigStore } from './config/ConfigStore.js';
+import { MemoryStore } from './memory/MemoryStore.js';
+import { InteractionLog } from './memory/InteractionLog.js';
+import { ConversationStore } from './history/ConversationStore.js';
+import { WatchStore } from './proactive/WatchStore.js';
+import { ReminderStore } from './proactive/ReminderStore.js';
+import { TaskStore } from './tasks/TaskStore.js';
 
 let seq = 0;
 const ctx: EnvelopeContext = {
@@ -80,14 +90,32 @@ class MockClient {
 
 describe('core daemon (Phase 0)', () => {
   let daemon: RunningDaemon;
+  let dir: string;
 
   beforeAll(async () => {
-    // Pin to the echo brain so these tests don't attempt to spawn Claude Code.
-    daemon = await startDaemon({ port: 0, token: 'test-token', brainMode: 'echo' });
+    // Pin to the echo brain so these tests don't attempt to spawn Claude Code,
+    // and point every store (and the config) at a temp dir — a test must never
+    // read or mutate the developer's real ~/.claude/workerking state.
+    dir = mkdtempSync(join(tmpdir(), 'wk-daemon-test-'));
+    daemon = await startDaemon({
+      port: 0,
+      token: 'test-token',
+      brainMode: 'echo',
+      config: new ConfigStore(), // in-memory, no persistence
+      deps: createDaemonDeps({
+        memory: new MemoryStore({ dir }),
+        interactionLog: new InteractionLog({ dir }),
+        conversations: new ConversationStore({ dir }),
+        watchStore: new WatchStore({ dir }),
+        reminderStore: new ReminderStore({ dir }),
+        taskStore: new TaskStore({ dir }),
+      }),
+    });
   });
 
   afterAll(async () => {
     await daemon.stop();
+    rmSync(dir, { recursive: true, force: true });
   });
 
   it('accepts a valid hello and sends welcome with host info', async () => {

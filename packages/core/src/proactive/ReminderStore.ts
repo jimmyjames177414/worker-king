@@ -1,4 +1,5 @@
-import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
+import { writeJsonAtomic } from '../util/atomicJson.js';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -48,8 +49,7 @@ export class ReminderStore {
   }
 
   private persist(): void {
-    mkdirSync(this.dir, { recursive: true });
-    writeFileSync(this.path, JSON.stringify({ reminders: this.reminders }, null, 2), 'utf8');
+    writeJsonAtomic(this.path, { reminders: this.reminders });
   }
 
   add(message: string, fireAt: number, id: string): Reminder {

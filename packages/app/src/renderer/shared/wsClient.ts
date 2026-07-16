@@ -23,21 +23,32 @@ export interface WsClientConnection {
 
 type Handler = (env: WsEnvelope) => void;
 
+/** Re-fetch the connection info (a daemon restart mints a new port + token). */
+export type ConnectionRefresher = () => Promise<WsClientConnection | undefined>;
+
 /**
  * Renderer-side WS client to the daemon. Performs the hello handshake, then
  * exposes send() and per-kind subscriptions. Auto-reconnects with backoff so a
- * daemon restart (or WSL localhost drop after sleep) heals transparently.
+ * daemon restart (or WSL localhost drop after sleep) heals transparently —
+ * every reconnect re-fetches the connection info via `refreshConn`, since a
+ * restarted daemon listens on a different port with a different token.
  */
 export class WsClient {
   private ws?: WebSocket;
+  /** Aborts the current socket's listeners so a stale close can't reconnect. */
+  private wsListeners?: AbortController;
   private readonly handlers = new Map<WsMessageKind, Set<Handler>>();
   private readonly anyHandlers = new Set<Handler>();
   private reconnectDelay = 500;
+  private reconnectTimer?: ReturnType<typeof setTimeout>;
   private closedByUser = false;
   private ready = false;
   private outbox: string[] = [];
 
-  constructor(private readonly conn: WsClientConnection) {}
+  constructor(
+    private conn: WsClientConnection,
+    private readonly refreshConn?: ConnectionRefresher,
+  ) {}
 
   connect(): void {
     this.closedByUser = false;
@@ -49,46 +60,90 @@ export class WsClient {
     this.closedByUser = false;
     const state = this.ws?.readyState;
     if (state === WebSocket.OPEN || state === WebSocket.CONNECTING) return;
-    this.open();
+    void this.refreshThenOpen();
   }
 
   private open(): void {
+    // Ensure only one live socket: drop any pending reconnect + close the old one.
+    if (this.reconnectTimer !== undefined) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = undefined;
+    }
+    if (this.ws && this.ws.readyState !== WebSocket.CLOSED) {
+      this.wsListeners?.abort(); // de-listen so its close can't schedule a reconnect
+      try {
+        this.ws.close();
+      } catch {
+        /* ignore */
+      }
+    }
+
+    const listeners = new AbortController();
+    this.wsListeners = listeners;
     const ws = new WebSocket(`ws://127.0.0.1:${this.conn.port}`);
     this.ws = ws;
 
-    ws.addEventListener('open', () => {
-      // Handshake first; the daemon replies with `welcome`.
-      this.rawSend('hello', { role: this.conn.role, token: this.conn.token });
-    });
+    ws.addEventListener(
+      'open',
+      () => {
+        // Handshake first; the daemon replies with `welcome`.
+        this.rawSend('hello', { role: this.conn.role, token: this.conn.token });
+      },
+      { signal: listeners.signal },
+    );
 
-    ws.addEventListener('message', (ev) => {
-      let env: WsEnvelope;
-      try {
-        env = parseEnvelope(String(ev.data));
-      } catch {
-        return;
-      }
-      if (env.kind === 'welcome') {
-        this.ready = true;
-        this.reconnectDelay = 500;
-        this.flush();
-      }
-      for (const h of this.handlers.get(env.kind) ?? []) h(env);
-      for (const h of this.anyHandlers) h(env);
-    });
+    ws.addEventListener(
+      'message',
+      (ev) => {
+        let env: WsEnvelope;
+        try {
+          env = parseEnvelope(String(ev.data));
+        } catch {
+          return;
+        }
+        if (env.kind === 'welcome') {
+          this.ready = true;
+          this.reconnectDelay = 500;
+          this.flush();
+        }
+        for (const h of this.handlers.get(env.kind) ?? []) h(env);
+        for (const h of this.anyHandlers) h(env);
+      },
+      { signal: listeners.signal },
+    );
 
-    ws.addEventListener('close', () => {
-      this.ready = false;
-      if (!this.closedByUser) this.scheduleReconnect();
-    });
-    ws.addEventListener('error', () => ws.close());
+    ws.addEventListener(
+      'close',
+      () => {
+        if (this.ws !== ws) return; // a newer socket took over
+        this.ready = false;
+        if (!this.closedByUser) this.scheduleReconnect();
+      },
+      { signal: listeners.signal },
+    );
+    ws.addEventListener('error', () => ws.close(), { signal: listeners.signal });
   }
 
   private scheduleReconnect(): void {
-    setTimeout(() => {
-      if (!this.closedByUser) this.open();
+    if (this.reconnectTimer !== undefined) return; // one pending reconnect at a time
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = undefined;
+      if (!this.closedByUser) void this.refreshThenOpen();
     }, this.reconnectDelay);
     this.reconnectDelay = Math.min(this.reconnectDelay * 2, 8000);
+  }
+
+  /** Re-fetch the (possibly new) port + token before dialing. */
+  private async refreshThenOpen(): Promise<void> {
+    if (this.refreshConn) {
+      try {
+        const fresh = await this.refreshConn();
+        if (fresh) this.conn = fresh;
+      } catch {
+        // keep dialing the last-known connection
+      }
+    }
+    if (!this.closedByUser) this.open();
   }
 
   private rawSend<K extends WsMessageKind>(
@@ -157,6 +212,10 @@ export class WsClient {
 
   close(): void {
     this.closedByUser = true;
+    if (this.reconnectTimer !== undefined) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = undefined;
+    }
     this.ws?.close();
   }
 }
@@ -169,7 +228,9 @@ export async function connectToDaemon(): Promise<WsClient> {
   if (!bridge) throw new Error('workerking preload bridge missing');
   const conn = await bridge.getConnection();
   if (!conn) throw new Error('no daemon connection available');
-  const client = new WsClient(conn);
+  // Reconnects re-fetch through the bridge so a restarted daemon's new
+  // port + token are picked up instead of dialing the dead endpoint forever.
+  const client = new WsClient(conn, () => bridge.getConnection());
   client.connect();
   return client;
 }

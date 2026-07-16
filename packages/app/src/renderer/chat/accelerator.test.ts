@@ -22,12 +22,25 @@ describe('formatAccelerator', () => {
 
   it('handles named and function keys', () => {
     expect(formatAccelerator(ev({ key: 'ArrowUp', code: 'ArrowUp', ctrlKey: true }))).toBe('Control+Up');
-    expect(formatAccelerator(ev({ key: 'F5', code: 'F5' }))).toBe('F5');
-    expect(formatAccelerator(ev({ key: 'Escape', code: 'Escape' }))).toBe('Escape');
+    expect(formatAccelerator(ev({ key: 'F5', code: 'F5', altKey: true }))).toBe('Alt+F5');
+    expect(formatAccelerator(ev({ key: 'Escape', code: 'Escape', ctrlKey: true }))).toBe('Control+Escape');
   });
 
   it('returns null while only modifiers are held', () => {
     expect(formatAccelerator(ev({ key: 'Control', ctrlKey: true }))).toBeNull();
     expect(formatAccelerator(ev({ key: 'Shift', shiftKey: true }))).toBeNull();
+  });
+
+  it('rejects chords without a modifier (a bare key would be swallowed globally)', () => {
+    expect(formatAccelerator(ev({ key: 'a', code: 'KeyA' }))).toBeNull();
+    expect(formatAccelerator(ev({ key: 'F5', code: 'F5' }))).toBeNull();
+    expect(formatAccelerator(ev({ key: 'Escape', code: 'Escape' }))).toBeNull();
+  });
+
+  it('rejects single chars that would not parse as accelerators', () => {
+    // '+' and non-ASCII/dead keys make globalShortcut.register throw.
+    expect(formatAccelerator(ev({ key: '+', code: 'BracketRight', ctrlKey: true }))).toBeNull();
+    expect(formatAccelerator(ev({ key: 'Ù', code: 'Quote', ctrlKey: true }))).toBeNull();
+    expect(formatAccelerator(ev({ key: 'Dead', code: 'BracketLeft', ctrlKey: true }))).toBeNull();
   });
 });

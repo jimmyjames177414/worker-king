@@ -101,7 +101,7 @@ export class ClaudeBackend implements Brain {
 
   constructor(private readonly opts: ClaudeBackendOptions) {}
 
-  private buildOptions(): Options {
+  private buildOptions(o: { resume?: boolean } = {}): Options {
     const append = this.opts.personaProvider?.() ?? this.opts.personaAppend;
     const cwd = this.opts.cwdProvider?.() ?? this.opts.cwd;
     // Repoint to a different project → don't resume the old project's session (F1).
@@ -115,13 +115,19 @@ export class ClaudeBackend implements Brain {
         ...(append ? { append } : {}),
       },
       includePartialMessages: true,
+      // SDK isolation mode: never load ~/.claude or the cwd's .claude settings.
+      // Without this, `permissions.allow` rules from those files (including a
+      // hostile repo's .claude/settings.json reached via claudeCwd) auto-allow
+      // tools without ever consulting canUseTool — silently bypassing both the
+      // gated confirmation (N1) and the readonly posture of background brains.
+      settingSources: [],
       ...(cwd ? { cwd } : {}),
       ...(this.opts.permissionMode ? { permissionMode: this.opts.permissionMode } : {}),
       ...(this.opts.canUseTool ? { canUseTool: this.opts.canUseTool } : {}),
       ...(this.opts.maxTurns ? { maxTurns: this.opts.maxTurns } : {}),
       ...(this.opts.mcpServers ? { mcpServers: this.opts.mcpServers } : {}),
       ...(this.opts.allowedTools ? { allowedTools: this.opts.allowedTools } : {}),
-      ...(this.sessionId ? { resume: this.sessionId } : {}),
+      ...(o.resume !== false && this.sessionId ? { resume: this.sessionId } : {}),
     };
     return options;
   }
@@ -136,11 +142,15 @@ export class ClaudeBackend implements Brain {
   private async consume(
     iterable: AsyncIterable<SDKMessage>,
     handlers: { onDelta?: (delta: string) => void; onToolUse?: (name: string) => void },
+    o: { trackSession?: boolean } = {},
   ): Promise<string> {
     let resultText = '';
     for await (const msg of iterable) {
       switch (msg.type) {
         case 'stream_event': {
+          // Subagent (Task) streams carry parent_tool_use_id — their internal
+          // text must not interleave into the user-visible reply.
+          if ((msg as { parent_tool_use_id?: string | null }).parent_tool_use_id) break;
           const delta = extractTextDelta(msg.event);
           if (delta) handlers.onDelta?.(delta);
           break;
@@ -152,9 +162,10 @@ export class ClaudeBackend implements Brain {
           break;
         }
         case 'result': {
-          // Persist the session id so the next message continues the thread,
-          // and record usage for budget/observability (N9).
-          this.sessionId = msg.session_id;
+          // Persist the session id so the next message continues the thread
+          // (chat only — task runs are sessionless, see run()), and record
+          // usage for budget/observability (N9).
+          if (o.trackSession !== false) this.sessionId = msg.session_id;
           this.lastUsage = extractUsage(msg);
           if (msg.subtype === 'success') resultText = msg.result;
           else throw this.normalizeError(new Error(`Claude ended with "${msg.subtype}"`), msg.subtype);
@@ -202,16 +213,27 @@ export class ClaudeBackend implements Brain {
     },
     signal: AbortSignal,
   ): Promise<void> {
+    // A task cancelled while the brain was still warming arrives pre-aborted;
+    // addEventListener on an aborted signal never fires, so check up front or
+    // the "cancelled" run burns a full Claude query with its events suppressed.
+    if (signal.aborted) return;
     const abort = new AbortController();
     const onAbort = () => abort.abort();
     signal.addEventListener('abort', onAbort, { once: true });
 
-    const options: Options = { ...this.buildOptions(), abortController: abort };
+    // Delegated tasks are sessionless on purpose: sharing the chat session
+    // would leak chat context into tasks and let concurrent task completions
+    // hijack which thread the *next chat message* resumes (last-writer-wins).
+    const options: Options = { ...this.buildOptions({ resume: false }), abortController: abort };
     try {
-      const resultText = await this.consume(this.opts.queryFn({ prompt, options }), {
-        onDelta: events.onDelta,
-        onToolUse: events.onToolUse,
-      });
+      const resultText = await this.consume(
+        this.opts.queryFn({ prompt, options }),
+        {
+          onDelta: events.onDelta,
+          onToolUse: events.onToolUse,
+        },
+        { trackSession: false },
+      );
       if (!signal.aborted) events.onDone(resultText || 'Done.');
     } catch (err) {
       if (!signal.aborted) events.onError(this.normalizeError(err));

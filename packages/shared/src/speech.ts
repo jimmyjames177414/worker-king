@@ -56,6 +56,10 @@ export function sanitizeForSpeech(input: string): string {
  * — turning turn latency from sum(stages) toward max(stages). Feed deltas via
  * `push()`; call `flush()` at the end for the trailing remainder.
  */
+const ABBREVIATIONS = new Set(['e.g', 'i.e', 'etc', 'dr', 'mr', 'mrs', 'ms', 'vs']);
+const TERMINALS = '.!?';
+const CLOSERS = '"\'”’)]';
+
 export class SentenceChunker {
   private buf = '';
 
@@ -63,16 +67,54 @@ export class SentenceChunker {
   push(chunk: string): string[] {
     this.buf += chunk;
     const out: string[] = [];
-    // A sentence = up to a terminal .!? (plus any closing quote/bracket),
-    // followed by whitespace or a newline.
-    const re = /^([\s\S]*?[.!?]+["'”’)\]]?)(\s+)/;
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(this.buf))) {
-      const sentence = m[1].trim();
+    let start = 0; // start of the pending sentence within buf
+    // Inside a ``` code fence, boundaries are held until the closing fence so
+    // every emitted chunk carries *balanced* fences — sanitizeForSpeech needs the
+    // pair to replace the block with "(code block)" instead of reading code aloud.
+    let inFence = false;
+    let i = 0;
+    while (i < this.buf.length) {
+      if (this.buf.startsWith('```', i)) {
+        inFence = !inFence;
+        i += 3;
+        continue;
+      }
+      if (inFence || !TERMINALS.includes(this.buf[i])) {
+        i++;
+        continue;
+      }
+      // A sentence = up to a run of terminal .!? (plus any closing
+      // quote/bracket), followed by whitespace or a newline.
+      let end = i;
+      while (end < this.buf.length && TERMINALS.includes(this.buf[end])) end++;
+      const singleDot = end === i + 1 && this.buf[i] === '.';
+      if (end < this.buf.length && CLOSERS.includes(this.buf[end])) end++;
+      if (
+        end >= this.buf.length || // terminal at the stream edge — hold for more input
+        !/\s/.test(this.buf[end]) ||
+        (singleDot && this.isNonBoundaryPeriod(start, i))
+      ) {
+        i = end;
+        continue;
+      }
+      const sentence = this.buf.slice(start, end).trim();
       if (sentence) out.push(sentence);
-      this.buf = this.buf.slice(m[0].length);
+      while (end < this.buf.length && /\s/.test(this.buf[end])) end++;
+      start = end;
+      i = end;
     }
+    this.buf = this.buf.slice(start);
     return out;
+  }
+
+  /** True when the period at `dot` ends an abbreviation or an ordered-list marker. */
+  private isNonBoundaryPeriod(start: number, dot: number): boolean {
+    const before = this.buf.slice(start, dot);
+    // "e.g." / "Dr." — the word (possibly dotted) right before this period.
+    const word = /(?:^|[^A-Za-z0-9])([A-Za-z]+(?:\.[A-Za-z]+)*)$/.exec(before)?.[1];
+    if (word && ABBREVIATIONS.has(word.toLowerCase())) return true;
+    // Line-leading ordered-list marker: "1. Install deps".
+    return /(?:^|\n)[ \t]*\d+$/.test(before);
   }
 
   /** Return (and clear) any buffered text that never hit a sentence boundary. */

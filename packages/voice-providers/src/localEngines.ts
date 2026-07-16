@@ -72,35 +72,51 @@ export class KokoroTtsEngine implements TtsEngine {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private tts?: any;
   private ctx?: AudioContext;
-  private source?: AudioBufferSourceNode;
+  /** All sources currently playing — concurrent speak()s must all be stoppable. */
+  private readonly sources = new Set<AudioBufferSourceNode>();
+  /**
+   * Barge-in epoch: stop() bumps it, and any speak() still awaiting synthesis
+   * checks it before playing. Without this, a sentence mid-`generate()` when
+   * the user barges in would start talking over them once synthesis resolves.
+   */
+  private epoch = 0;
   constructor(private readonly voiceId = 'af_heart') {}
   async speak(text: string): Promise<void> {
+    const started = this.epoch;
     if (!this.tts) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const k = (await optionalImport('kokoro-js')) as any;
       this.tts = await k.KokoroTTS.from_pretrained('onnx-community/Kokoro-82M-ONNX');
     }
+    if (this.epoch !== started) return; // barged in while loading
     const audio = await this.tts.generate(text, { voice: this.voiceId });
+    if (this.epoch !== started) return; // barged in while synthesizing
     const { audio: samples, sampling_rate } = audio; // Float32 PCM + rate
     this.ctx ??= new AudioContext();
     const buffer = this.ctx.createBuffer(1, samples.length, sampling_rate);
     buffer.getChannelData(0).set(samples);
     await new Promise<void>((resolve) => {
       const src = this.ctx!.createBufferSource();
-      this.source = src;
+      this.sources.add(src);
       src.buffer = buffer;
       src.connect(this.ctx!.destination);
-      src.onended = () => resolve();
+      src.onended = () => {
+        this.sources.delete(src);
+        resolve();
+      };
       src.start();
     });
   }
   stop(): void {
-    try {
-      this.source?.stop();
-    } catch {
-      /* already stopped */
+    this.epoch++;
+    for (const src of this.sources) {
+      try {
+        src.stop();
+      } catch {
+        /* already stopped */
+      }
     }
-    this.source = undefined;
+    this.sources.clear();
   }
 }
 

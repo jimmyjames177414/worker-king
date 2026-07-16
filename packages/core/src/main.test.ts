@@ -5,7 +5,7 @@ import type { MemoryStore } from './memory/MemoryStore.js';
 
 describe('createDaemonDeps', () => {
   it('returns injected stores as-is and never constructs the real ones', () => {
-    // All five injected → no `new Store()` runs, so importing/using this module
+    // All six injected → no `new Store()` runs, so importing/using this module
     // in a test never touches ~/.claude (the point of the 2a refactor).
     const fakes = {
       memory: {} as MemoryStore,
@@ -13,11 +13,13 @@ describe('createDaemonDeps', () => {
       conversations: {} as DaemonDeps['conversations'],
       watchStore: {} as DaemonDeps['watchStore'],
       reminderStore: {} as DaemonDeps['reminderStore'],
+      taskStore: {} as DaemonDeps['taskStore'],
     };
     const deps = createDaemonDeps(fakes);
     expect(deps.memory).toBe(fakes.memory);
     expect(deps.conversations).toBe(fakes.conversations);
     expect(deps.reminderStore).toBe(fakes.reminderStore);
+    expect(deps.taskStore).toBe(fakes.taskStore);
   });
 });
 

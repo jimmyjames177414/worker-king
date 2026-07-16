@@ -26,10 +26,18 @@ describe('WorkerKing config schema', () => {
     expect(out.screenAwareness).toBe(true);
   });
 
-  it('parseConfig drops a whole blob whose known key is the wrong type', () => {
-    // A tampered/corrupt field fails validation → caller falls back to defaults.
-    const out = parseConfig({ screenAwareness: 'yes-please' });
+  it('parseConfig drops only the mistyped key, salvaging the rest', () => {
+    // Per-key salvage: one tampered/corrupt field must not wipe every other
+    // setting back to defaults on the next boot.
+    const out = parseConfig({ screenAwareness: 'yes-please', assistantName: 'Bea' });
     expect(out.screenAwareness).toBeUndefined();
+    expect(out.assistantName).toBe('Bea');
+  });
+
+  it('parseConfig rejects prototype-polluting keys', () => {
+    const out = parseConfig(JSON.parse('{"__proto__": {"polluted": true}, "assistantName": "Bea"}'));
+    expect(Object.keys(out)).toEqual(['assistantName']);
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
   });
 
   it('parseConfig preserves unknown passthrough keys', () => {

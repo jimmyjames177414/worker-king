@@ -1,7 +1,13 @@
-import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { DEFAULT_CONFIG, parseConfig, type WorkerKingConfig } from '@workerking/shared';
+import {
+  DEFAULT_CONFIG,
+  parseConfig,
+  validateConfigValue,
+  type WorkerKingConfig,
+} from '@workerking/shared';
+import { writeJsonAtomic } from '../util/atomicJson.js';
 
 /**
  * ConfigStore — the daemon's view of user configuration.
@@ -58,8 +64,7 @@ export class ConfigStore {
   private persist(): void {
     if (!this.persistPath) return;
     try {
-      mkdirSync(join(this.persistPath, '..'), { recursive: true });
-      writeFileSync(this.persistPath, JSON.stringify(this.data, null, 2), 'utf8');
+      writeJsonAtomic(this.persistPath, this.data);
     } catch {
       // Persistence is best-effort; never let it break the daemon.
     }
@@ -73,9 +78,15 @@ export class ConfigStore {
   }
 
   set(key: string, value: unknown): void {
-    this.data[key] = value;
+    // Same gate as load(): the WS `config.set` payload is z.unknown(), so an
+    // unvalidated write here would persist a value that load() later rejects —
+    // runtime and disk config silently diverging (and, pre-fix, one bad key
+    // used to wipe the whole file back to defaults on the next boot).
+    const checked = validateConfigValue(key, value);
+    if (!checked.ok) return;
+    this.data[key] = checked.value;
     this.persist();
-    for (const l of this.listeners) l(key, value);
+    for (const l of this.listeners) l(key, checked.value);
   }
 
   onChange(listener: ConfigChangeListener): () => void {

@@ -17,7 +17,9 @@ export function createChatWindow(): BrowserWindow {
       preload: join(__dirname, '../preload/chat.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
+      // These preloads only use contextBridge/ipcRenderer, which work sandboxed
+      // — no reason to hand a window that renders LLM/tool output full Node.
+      sandbox: true,
     },
   });
 

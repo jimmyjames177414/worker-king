@@ -53,4 +53,32 @@ describe('SentenceChunker', () => {
     c.push('Done. ');
     expect(c.flush()).toEqual([]);
   });
+
+  it('holds boundaries inside a code fence so emitted chunks carry balanced fences', () => {
+    // The streamed-voice regression: splitting on '.' inside a fence used to
+    // hand sanitizeForSpeech an unpaired ``` — and the code was read aloud.
+    const c = new SentenceChunker();
+    const out = [
+      ...c.push('Run this:\n```\nrm -rf node_modules. '),
+      ...c.push('Then reinstall.\n``` Done. '),
+    ];
+    expect(out.length).toBeGreaterThan(0);
+    for (const sentence of out) {
+      const spoken = sanitizeForSpeech(sentence);
+      expect(spoken).not.toContain('rm -rf');
+    }
+  });
+
+  it('does not split after abbreviations', () => {
+    const c = new SentenceChunker();
+    expect(c.push('Use e.g. the tests. ')).toEqual(['Use e.g. the tests.']);
+    expect(c.push('Dr. Smith called. ')).toEqual(['Dr. Smith called.']);
+  });
+
+  it('does not split after an ordered-list marker', () => {
+    const c = new SentenceChunker();
+    expect(c.push('1. Install deps\n2. Run the build. ')).toEqual([
+      '1. Install deps\n2. Run the build.',
+    ]);
+  });
 });

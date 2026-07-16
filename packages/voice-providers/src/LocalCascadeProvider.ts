@@ -98,8 +98,13 @@ export class LocalCascadeProvider implements VoiceProvider {
     this.setState('idle');
   }
 
+  /** Monotonic id per spoken utterance, so a superseded one can't clobber state. */
+  private speakSeq = 0;
+
   /** Speak assistant text (the brain's reply, or a progress update). */
   async injectAssistantContext(text: string): Promise<void> {
+    // A reply landing after stop() must not synthesize/speak into a dead session.
+    if (!this.running) return;
     if (!text.trim()) return;
     // Flatten markdown/code/reasoning so the TTS engine never voices literal
     // backticks, asterisks, or a <think> block (N4).
@@ -107,10 +112,14 @@ export class LocalCascadeProvider implements VoiceProvider {
     if (!spoken) return;
     this.startOpts?.delegate.onAssistantTranscript(spoken, true);
     this.setState('talking');
+    const seq = ++this.speakSeq;
     try {
       await this.engines.tts.speak(spoken);
     } finally {
-      if (this.running) this.setState('listening');
+      // Only the *latest* utterance resets state — a barged-in/superseded one
+      // resolving late must not flip 'thinking' (set by the new STT) back to
+      // 'listening' (the state-flap).
+      if (this.running && seq === this.speakSeq) this.setState('listening');
     }
   }
 

@@ -101,13 +101,25 @@ export class WakeWordController {
     return this.enabled;
   }
 
+  /** Bumped by disable(); an enable() still awaiting the mic must tear down. */
+  private enableEpoch = 0;
+
   async enable(inputDeviceId?: string): Promise<void> {
     if (this.enabled) return;
     this.enabled = true;
+    const myEnable = ++this.enableEpoch;
     this.detector.reset();
     this.chunker.reset();
 
-    this.stream = await navigator.mediaDevices.getUserMedia(audioInputConstraints(inputDeviceId));
+    const stream = await navigator.mediaDevices.getUserMedia(audioInputConstraints(inputDeviceId));
+    // disable() (or a newer enable, e.g. a device switch) won the race while we
+    // awaited the mic: releasing the just-acquired stream here is what keeps
+    // the mic indicator honest — assigning it would orphan a live tap.
+    if (myEnable !== this.enableEpoch || !this.enabled) {
+      stream.getTracks().forEach((t) => t.stop());
+      return;
+    }
+    this.stream = stream;
     // 16 kHz to match wake-word models.
     this.ctx = new AudioContext({ sampleRate: 16000 });
     const source = this.ctx.createMediaStreamSource(this.stream);
@@ -133,6 +145,7 @@ export class WakeWordController {
 
   disable(): void {
     this.enabled = false;
+    this.enableEpoch++; // invalidate any enable() still awaiting the mic
     this.node?.disconnect();
     this.node = undefined;
     void this.ctx?.close();

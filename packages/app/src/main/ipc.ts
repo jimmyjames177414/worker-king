@@ -49,6 +49,9 @@ export function registerIpc(deps: IpcDeps): void {
   // Settings: config read/write (write is persisted + forwarded to the daemon).
   ipcMain.handle('wk:get-config', () => deps.getConfig());
   ipcMain.handle('wk:set-config', (_e, key: string, value: unknown) => {
+    // Defense-in-depth: both renderers are app-controlled, but a config key is
+    // assigned onto plain objects downstream — never let it be a prototype hook.
+    if (typeof key !== 'string' || ['__proto__', 'constructor', 'prototype'].includes(key)) return;
     deps.setConfig(key, value);
   });
 

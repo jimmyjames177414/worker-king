@@ -1,7 +1,8 @@
-import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { ConversationMessage, ConversationSummary } from '@workerking/shared';
+import { writeJsonAtomic } from '../util/atomicJson.js';
 
 /**
  * ConversationStore — durable, browsable chat history.
@@ -84,7 +85,11 @@ export class ConversationStore {
     const dir = opts.dir ?? join(homedir(), '.claude', 'workerking');
     this.path = join(dir, 'conversations.json');
     this.now = opts.now ?? (() => Date.now());
-    this.newId = opts.newId ?? (() => `conv-${Math.floor(this.now())}-${this.data.conversations.length}`);
+    // Random suffix: two conversations created within one ms must not collide
+    // (a length-based suffix reuses ids after a delete, mis-targeting setCurrent).
+    this.newId =
+      opts.newId ??
+      (() => `conv-${Math.floor(this.now())}-${Math.random().toString(36).slice(2, 8)}`);
     this.maxConversations = Math.max(1, opts.maxConversations ?? 100);
     this.maxMessages = Math.max(1, opts.maxMessagesPerConversation ?? 500);
     this.summarize = opts.summarize ?? defaultConversationSummarizer;
@@ -95,7 +100,24 @@ export class ConversationStore {
     if (!existsSync(this.path)) return;
     try {
       const parsed = JSON.parse(readFileSync(this.path, 'utf8'));
-      if (Array.isArray(parsed?.conversations)) this.data = parsed;
+      if (Array.isArray(parsed?.conversations)) {
+        // Keep only structurally sound conversations; a hand-edited entry must
+        // not crash list()/append() later. currentId is only honored if it
+        // points at a surviving conversation.
+        const conversations = (parsed.conversations as Conversation[]).filter(
+          (c) =>
+            !!c &&
+            typeof c === 'object' &&
+            typeof c.id === 'string' &&
+            typeof c.title === 'string' &&
+            Array.isArray(c.messages),
+        );
+        const currentId =
+          typeof parsed.currentId === 'string' && conversations.some((c) => c.id === parsed.currentId)
+            ? (parsed.currentId as string)
+            : undefined;
+        this.data = { conversations, currentId };
+      }
     } catch {
       // Corrupt file → start fresh; the next write repairs it.
     }
@@ -103,8 +125,7 @@ export class ConversationStore {
 
   private persist(): void {
     try {
-      mkdirSync(join(this.path, '..'), { recursive: true });
-      writeFileSync(this.path, JSON.stringify(this.data, null, 2), 'utf8');
+      writeJsonAtomic(this.path, this.data);
     } catch {
       // Best-effort; history must never crash the daemon.
     }
@@ -133,9 +154,31 @@ export class ConversationStore {
     return conv.id;
   }
 
-  /** Append a turn to the current conversation. Titles from the first user line. */
-  append(role: ConversationMessage['role'], text: string): void {
-    const conv = this.current();
+  /**
+   * Append a turn to the current conversation. Titles from the first user line.
+   * Returns the conversation's id so a caller can thread a later reply to the
+   * same conversation (see appendTo) even if "current" changes meanwhile.
+   */
+  append(role: ConversationMessage['role'], text: string): string {
+    return this.appendToConversation(this.current(), role, text);
+  }
+
+  /**
+   * Append to a *specific* conversation — the streaming-reply case: the user
+   * turn went to conversation X, then the user hit "new chat"/loaded another
+   * while the brain was still responding. The assistant turn must land in X,
+   * not whichever conversation is current at completion time. Falls back to
+   * the current conversation if `id` was deleted meanwhile.
+   */
+  appendTo(id: string, role: ConversationMessage['role'], text: string): string {
+    return this.appendToConversation(this.find(id) ?? this.current(), role, text);
+  }
+
+  private appendToConversation(
+    conv: Conversation,
+    role: ConversationMessage['role'],
+    text: string,
+  ): string {
     conv.messages.push({ role, text, ts: this.now() });
     if (conv.messages.length > this.maxMessages) {
       // Fold the evicted turns into the rolling summary before dropping them,
@@ -148,6 +191,7 @@ export class ConversationStore {
     }
     conv.updatedAt = this.now();
     this.persist();
+    return conv.id;
   }
 
   /** Attach the SDK session id to the current conversation (for later resume). */

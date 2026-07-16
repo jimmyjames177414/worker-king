@@ -1,5 +1,6 @@
 import type { WsServer, WsClient } from '../ws/server.js';
 import type { WsEnvelope } from '@workerking/shared';
+import { ClaudeAuthError, ClaudeRateLimitError } from '../claude/ClaudeBackend.js';
 import type { ConfigStore } from '../config/ConfigStore.js';
 import type { Brain } from '../brain/Brain.js';
 import { TaskManager } from '../tasks/TaskManager.js';
@@ -64,8 +65,13 @@ export class Supervisor {
     });
 
     this.server.onMessage((client, env) => {
-      // Route by kind; unknown kinds are ignored (forward-compatible).
-      void this.dispatch(client, env);
+      // Route by kind; unknown kinds are ignored (forward-compatible). A handler
+      // throw must never become an unhandled rejection (which would kill the
+      // daemon on Node ≥ 15) — surface it to the sender instead.
+      this.dispatch(client, env).catch((err) => {
+        this.logger?.warn('dispatch failed', { kind: env.kind, error: String(err) });
+        client.send('error', { message: String(err), code: 'internal_error' });
+      });
     });
 
     // Rebroadcast config changes to every client (renderers keep settings live).
@@ -146,16 +152,19 @@ export class Supervisor {
     const turnLog = this.logger?.child('turn');
     const startedAt = daemonEnvelopeContext.now();
     turnLog?.info('chat.start', { turnId: env.id, messageId, chars: text.length });
-    this.history?.append('user', text);
+    // Remember which conversation this turn belongs to: if the user starts/loads
+    // another conversation while the reply streams, the assistant turn must
+    // still land here, not in whichever conversation is current at completion.
+    const conversationId = this.history?.append('user', text);
     try {
       const full = await this.brain.respond(text, (delta) => {
         client.send('chat.assistant_delta', { messageId, delta });
       });
       client.send('chat.assistant_done', { messageId, text: full });
-      this.history?.append('assistant', full);
+      if (conversationId) this.history?.appendTo(conversationId, 'assistant', full);
       this.log?.append('chat', `user: ${text} | assistant: ${full.slice(0, 200)}`);
       // Surface token/cost usage when the brain tracks it (N9).
-      const usage = (this.brain as { getLastUsage?: () => unknown }).getLastUsage?.();
+      const usage = this.brain.getLastUsage?.();
       turnLog?.info('chat.done', {
         turnId: env.id,
         ms: daemonEnvelopeContext.now() - startedAt,
@@ -164,9 +173,17 @@ export class Supervisor {
       });
     } catch (err) {
       turnLog?.warn('chat.error', { turnId: env.id, error: String(err) });
+      // Keep the classified conditions distinct so the UI can react (retry hint
+      // for a limit, login hint for auth) instead of a generic failure.
+      const code =
+        err instanceof ClaudeRateLimitError
+          ? 'rate_limited'
+          : err instanceof ClaudeAuthError
+            ? 'auth_required'
+            : 'brain_error';
       client.send('error', {
         message: `Brain failed: ${String(err)}`,
-        code: 'brain_error',
+        code,
       });
     }
   }
@@ -198,6 +215,9 @@ export class Supervisor {
   private handleHistoryLoad(client: WsClient, env: WsEnvelope<'history.load'>): void {
     const { conversationId } = env.payload;
     this.history?.setCurrent(conversationId); // resume: new turns append here
+    // Drop the live model session too — otherwise the UI shows the loaded
+    // transcript while the model keeps answering from the previous thread.
+    this.brain.resetSession?.();
     client.send('history.load_result', {
       conversationId,
       messages: this.history?.load(conversationId) ?? [],
@@ -206,6 +226,9 @@ export class Supervisor {
 
   private handleHistoryNew(client: WsClient): void {
     const conversationId = this.history?.startNew() ?? '';
+    // "New chat" must reset the model's context, not just the transcript —
+    // without this the next message resumes the old session (context bleed).
+    this.brain.resetSession?.();
     client.send('history.new_result', { conversationId });
   }
 
@@ -232,8 +255,12 @@ export class Supervisor {
 
   private handleWatchRemove(client: WsClient, env: WsEnvelope<'watches.remove'>): void {
     if (this.watches) {
-      this.watches.store.remove(env.payload.id);
-      this.watches.reload(this.allWatches());
+      try {
+        this.watches.store.remove(env.payload.id);
+        this.watches.reload(this.allWatches());
+      } catch (err) {
+        client.send('error', { message: String(err), code: 'watch_invalid' });
+      }
     }
     this.sendWatches(client);
   }

@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync, renameSync, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -62,8 +62,13 @@ export class MemoryStore {
 
   private persist(): void {
     mkdirSync(this.dir, { recursive: true });
-    writeFileSync(this.jsonPath, JSON.stringify({ entries: this.entries }, null, 2), 'utf8');
-    writeFileSync(this.mdPath, this.toMarkdown(), 'utf8');
+    // Atomic (tmp + rename): a crash mid-write must not truncate the store.
+    const tmpJson = `${this.jsonPath}.${process.pid}.tmp`;
+    writeFileSync(tmpJson, JSON.stringify({ entries: this.entries }, null, 2), 'utf8');
+    renameSync(tmpJson, this.jsonPath);
+    const tmpMd = `${this.mdPath}.${process.pid}.tmp`;
+    writeFileSync(tmpMd, this.toMarkdown(), 'utf8');
+    renameSync(tmpMd, this.mdPath);
   }
 
   /** Store or update a memory (update-not-append: same key overwrites). */
