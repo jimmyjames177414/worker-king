@@ -56,9 +56,7 @@ export function defaultConversationSummarizer({
   dropped: ConversationMessage[];
   previous?: string;
 }): string {
-  const parts = dropped.map(
-    (m) => `${m.role}: ${m.text.replace(/\s+/g, ' ').trim().slice(0, 80)}`,
-  );
+  const parts = dropped.map((m) => `${m.role}: ${m.text.replace(/\s+/g, ' ').trim().slice(0, 80)}`);
   const combined = [previous, ...parts].filter(Boolean).join(' | ');
   // Keep the rolling summary bounded so it can't grow without limit either.
   const MAX = 1200;
@@ -113,7 +111,8 @@ export class ConversationStore {
             Array.isArray(c.messages),
         );
         const currentId =
-          typeof parsed.currentId === 'string' && conversations.some((c) => c.id === parsed.currentId)
+          typeof parsed.currentId === 'string' &&
+          conversations.some((c) => c.id === parsed.currentId)
             ? (parsed.currentId as string)
             : undefined;
         this.data = { conversations, currentId };
@@ -146,7 +145,13 @@ export class ConversationStore {
   /** Begin a fresh conversation and make it current; returns its id. */
   startNew(): string {
     const t = this.now();
-    const conv: Conversation = { id: this.newId(), title: 'New chat', createdAt: t, updatedAt: t, messages: [] };
+    const conv: Conversation = {
+      id: this.newId(),
+      title: 'New chat',
+      createdAt: t,
+      updatedAt: t,
+      messages: [],
+    };
     this.data.conversations.push(conv);
     this.data.currentId = conv.id;
     this.prune();

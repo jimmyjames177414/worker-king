@@ -12,6 +12,7 @@ import type { WatchStore } from '../proactive/WatchStore.js';
 import { composeWatches } from '../proactive/ProactiveManager.js';
 import type { Watch } from '@workerking/shared';
 import type { Logger } from '../util/logger.js';
+import type { EnvironmentContext } from '../environment/EnvironmentContext.js';
 
 /** How the Supervisor manages proactive watches (persist + live reload). */
 export interface WatchDeps {
@@ -32,6 +33,8 @@ export interface WatchDeps {
  */
 export class Supervisor {
   private readonly tasks: TaskManager;
+  /** Chat turns run one at a time; see handleChat(). */
+  private chatChain: Promise<void> = Promise.resolve();
 
   constructor(
     private readonly server: WsServer,
@@ -44,6 +47,8 @@ export class Supervisor {
     private readonly logger?: Logger,
     /** Durable task record (N12); survives restarts and outlives eviction. */
     taskStore?: TaskStore,
+    /** Repo-root resolver backing delegate_to_worker's `folder` argument. */
+    private readonly environment?: Pick<EnvironmentContext, 'resolveRepoPath'>,
   ) {
     // TaskManager drives delegated (voice) work; its events become task.* broadcasts.
     this.tasks = new TaskManager({
@@ -102,6 +107,11 @@ export class Supervisor {
         return this.handleWatchAdd(client, env as WsEnvelope<'watches.add'>);
       case 'watches.remove':
         return this.handleWatchRemove(client, env as WsEnvelope<'watches.remove'>);
+      case 'proactive.notify':
+        // External clients (e.g. Sprint) can push a proactive notice by sending
+        // this message; the daemon re-broadcasts it so the overlay speaks it.
+        this.server.broadcast('proactive.notify', (env as WsEnvelope<'proactive.notify'>).payload);
+        return;
       default:
         // Not handled in this phase.
         return;
@@ -113,7 +123,10 @@ export class Supervisor {
    * fast (delegate returns a task_id immediately) so the conversation stays fluid,
    * and progress/results flow asynchronously as task.* broadcasts.
    */
-  private handleVoiceToolCall(client: WsClient, env: WsEnvelope<'voice.tool_call'>): void {
+  private async handleVoiceToolCall(
+    client: WsClient,
+    env: WsEnvelope<'voice.tool_call'>,
+  ): Promise<void> {
     const { name, args } = env.payload;
     const a = (args ?? {}) as Record<string, unknown>;
     const reply = (result: unknown, isError = false) =>
@@ -123,8 +136,17 @@ export class Supervisor {
       case 'delegate_to_worker': {
         const prompt = String(a.task ?? a.prompt ?? a.request ?? '').trim();
         if (!prompt) return reply({ error: 'No task text provided.' }, true);
-        const taskId = this.tasks.create(prompt);
-        return reply({ status: 'started', task_id: taskId });
+        // Optional folder targeting: resolve a repo name/path against the known
+        // roots so the task runs there instead of the chat's active project.
+        let cwd: string | undefined;
+        const folder = String(a.folder ?? '').trim();
+        if (folder && this.environment) {
+          const resolved = await this.environment.resolveRepoPath(folder);
+          if (!resolved.ok) return reply({ error: resolved.error }, true);
+          cwd = resolved.path;
+        }
+        const taskId = this.tasks.create(prompt, { cwd });
+        return reply({ status: 'started', task_id: taskId, ...(cwd ? { folder: cwd } : {}) });
       }
       case 'check_task_status': {
         const task = this.tasks.check(String(a.task_id ?? ''));
@@ -143,15 +165,33 @@ export class Supervisor {
     }
   }
 
-  private async handleChat(
-    client: WsClient,
-    env: WsEnvelope<'chat.user_message'>,
-  ): Promise<void> {
+  private handleChat(client: WsClient, env: WsEnvelope<'chat.user_message'>): Promise<void> {
+    // Serialize chat turns: two rapid user messages must not both call
+    // brain.respond() concurrently — the SDK session's `resume` id is only set
+    // after the first call resolves, so overlapping calls fork the thread and
+    // last-writer-wins on sessionId. Streaming still happens per-turn; this just
+    // gates when a turn is allowed to START. A rejected turn must not wedge the
+    // chain for every turn after it, so the chain itself always resolves —
+    // the caller still gets the turn's own outcome via `turn`.
+    const turn = this.chatChain.then(() => this.runChatTurn(client, env));
+    this.chatChain = turn.catch(() => {});
+    return turn;
+  }
+
+  private async runChatTurn(client: WsClient, env: WsEnvelope<'chat.user_message'>): Promise<void> {
     const { text, messageId } = env.payload;
     // Per-turn trace: the envelope id correlates every log line for this turn (N8).
     const turnLog = this.logger?.child('turn');
     const startedAt = daemonEnvelopeContext.now();
-    turnLog?.info('chat.start', { turnId: env.id, messageId, chars: text.length });
+    // brainId distinguishes a real Claude reply from an EchoBrain fallback (or a
+    // still-resolving DeferredBrain) — without it, a wrong/echoed answer in the
+    // transcript is indistinguishable from a real Claude reply in the logs.
+    turnLog?.info('chat.start', {
+      turnId: env.id,
+      messageId,
+      chars: text.length,
+      brainId: this.brain.id,
+    });
     // Remember which conversation this turn belongs to: if the user starts/loads
     // another conversation while the reply streams, the assistant turn must
     // still land here, not in whichever conversation is current at completion.
@@ -169,10 +209,16 @@ export class Supervisor {
         turnId: env.id,
         ms: daemonEnvelopeContext.now() - startedAt,
         chars: full.length,
+        brainId: this.brain.id,
         ...(usage ? { usage } : {}),
       });
     } catch (err) {
-      turnLog?.warn('chat.error', { turnId: env.id, error: String(err) });
+      turnLog?.warn('chat.error', {
+        turnId: env.id,
+        brainId: this.brain.id,
+        error: String(err),
+        stack: err instanceof Error ? err.stack : undefined,
+      });
       // Keep the classified conditions distinct so the UI can react (retry hint
       // for a limit, login hint for auth) instead of a generic failure.
       const code =
@@ -217,6 +263,7 @@ export class Supervisor {
     this.history?.setCurrent(conversationId); // resume: new turns append here
     // Drop the live model session too — otherwise the UI shows the loaded
     // transcript while the model keeps answering from the previous thread.
+    this.logger?.info('brain.session_reset', { reason: 'history.load', conversationId });
     this.brain.resetSession?.();
     client.send('history.load_result', {
       conversationId,
@@ -228,6 +275,7 @@ export class Supervisor {
     const conversationId = this.history?.startNew() ?? '';
     // "New chat" must reset the model's context, not just the transcript —
     // without this the next message resumes the old session (context bleed).
+    this.logger?.info('brain.session_reset', { reason: 'history.new', conversationId });
     this.brain.resetSession?.();
     client.send('history.new_result', { conversationId });
   }

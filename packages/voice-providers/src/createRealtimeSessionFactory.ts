@@ -1,5 +1,4 @@
 import { RealtimeAgent, RealtimeSession, tool } from '@openai/agents-realtime';
-import { z } from 'zod';
 import type { JsonValue } from '@workerking/shared';
 import type { RealtimeSessionLike, SessionFactory } from './GptRealtimeProvider.js';
 
@@ -14,8 +13,16 @@ export const createRealtimeSessionFactory: SessionFactory = (cfg): RealtimeSessi
     tool({
       name: spec.name,
       description: spec.description,
-      // Args are validated on our side; accept a permissive object and forward.
-      parameters: z.object({}).passthrough(),
+      // Forward the real per-tool JSON Schema so the realtime model sees actual
+      // argument shapes (was a permissive empty-object schema, so the model
+      // could call e.g. delegate_to_worker with no `task`).
+      parameters: {
+        type: 'object' as const,
+        properties: (spec.parameters.properties as Record<string, unknown>) ?? {},
+        required: (spec.parameters.required as string[]) ?? [],
+        additionalProperties: true as const,
+      },
+      strict: false,
       execute: async (args: unknown) => {
         const result = await cfg.onToolCall(spec.name, (args ?? {}) as JsonValue);
         return typeof result === 'string' ? result : JSON.stringify(result);
@@ -29,6 +36,15 @@ export const createRealtimeSessionFactory: SessionFactory = (cfg): RealtimeSessi
     tools,
   });
 
-  const session = new RealtimeSession(agent, { model: cfg.model });
+  const session = new RealtimeSession(agent, {
+    model: cfg.model,
+    // Without an input-transcription model the server never transcribes the
+    // user's speech — user captions/history would be empty. Also the source of
+    // the user partial-transcript events the provider streams to captions.
+    config: { audio: { input: { transcription: { model: 'gpt-4o-mini-transcribe' } } } },
+  });
+  // The real RealtimeSession exposes `.transport` (requestResponse /
+  // updateSessionConfig / raw events) — the provider uses it for out-of-band
+  // speech injection, turn tracking, and drop detection.
   return session as unknown as RealtimeSessionLike;
 };

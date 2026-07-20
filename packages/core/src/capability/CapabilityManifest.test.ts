@@ -21,7 +21,10 @@ describe('mapToEntries', () => {
     const entries = mapToEntries(
       [{ name: 'deploy', description: 'ship it' }],
       [{ name: 'reviewer', description: 'reviews code' }],
-      [{ name: 'github', status: 'connected' }, { name: 'db', status: 'failed' }],
+      [
+        { name: 'github', status: 'connected' },
+        { name: 'db', status: 'failed' },
+      ],
     );
     expect(entries.find((e) => e.name === 'deploy')).toMatchObject({
       kind: 'command',

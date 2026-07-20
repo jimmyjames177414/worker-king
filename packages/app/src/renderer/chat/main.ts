@@ -191,10 +191,10 @@ async function main(): Promise<void> {
     const { tool, summary } = env.payload;
     // Voice-first usage: this window may never have been opened. Surface it
     // first — a confirm dialog in a hidden window silently times out to deny.
-    (
-      window as unknown as { workerking?: { showWindow?: () => void } }
-    ).workerking?.showWindow?.();
-    const approved = window.confirm(`WorkerKing wants to ${summary}\n\n[${tool}] Allow this action?`);
+    (window as unknown as { workerking?: { showWindow?: () => void } }).workerking?.showWindow?.();
+    const approved = window.confirm(
+      `WorkerKing wants to ${summary}\n\n[${tool}] Allow this action?`,
+    );
     client.send('tool.confirm_response', { approved }, { replyTo: env.id });
   });
 
@@ -220,19 +220,35 @@ async function main(): Promise<void> {
   });
   new CommandPalette(input, form, () => capabilities);
 
-  // Track the in-flight assistant bubble by messageId.
-  const bubbles = new Map<string, HTMLElement>();
+  // Track the in-flight assistant bubble by messageId. Also tracks the last
+  // update time so a stalled stream (daemon died mid-turn, chat.assistant_done
+  // never arrives) can be swept instead of leaking the map entry + bubble forever.
+  const bubbles = new Map<string, { el: HTMLElement; lastUpdate: number }>();
+  const STALE_BUBBLE_MS = 60_000;
+
+  const finalizeStaleBubbles = () => {
+    const now = Date.now();
+    for (const [id, entry] of bubbles) {
+      if (now - entry.lastUpdate < STALE_BUBBLE_MS) continue;
+      renderInto(entry.el, 'wk', (entry.el.dataset['raw'] ?? '') + '\n\n_(connection lost)_');
+      bubbles.delete(id);
+    }
+  };
+  const staleBubbleSweep = setInterval(finalizeStaleBubbles, 15_000);
+  window.addEventListener('beforeunload', () => clearInterval(staleBubbleSweep));
 
   client.on('chat.assistant_delta', (env) => {
     const id = env.payload.messageId ?? '_';
     let entry = bubbles.get(id);
     if (!entry) {
-      entry = appendBubble(log, 'wk');
-      entry.dataset['raw'] = '';
+      const el = appendBubble(log, 'wk');
+      el.dataset['raw'] = '';
+      entry = { el, lastUpdate: Date.now() };
       bubbles.set(id, entry);
     }
-    entry.dataset['raw'] = (entry.dataset['raw'] ?? '') + env.payload.delta;
-    entry.textContent = entry.dataset['raw'] ?? ''; // plain while streaming
+    entry.el.dataset['raw'] = (entry.el.dataset['raw'] ?? '') + env.payload.delta;
+    entry.el.textContent = entry.el.dataset['raw'] ?? ''; // plain while streaming
+    entry.lastUpdate = Date.now();
     log.scrollTop = log.scrollHeight;
   });
 
@@ -241,7 +257,7 @@ async function main(): Promise<void> {
     const entry = bubbles.get(id);
     const text = env.payload.text;
     if (entry) {
-      renderInto(entry, 'wk', text); // Markdown once complete
+      renderInto(entry.el, 'wk', text); // Markdown once complete
       bubbles.delete(id);
     }
     record('wk', text);
@@ -264,7 +280,12 @@ async function main(): Promise<void> {
     taskList.upsert({ id: t.id, prompt: t.prompt, state: t.state, result: t.result?.summary });
   });
   client.on('task.error', (env) => {
-    taskList.upsert({ id: env.payload.taskId, prompt: '', state: 'error', error: env.payload.error });
+    taskList.upsert({
+      id: env.payload.taskId,
+      prompt: '',
+      state: 'error',
+      error: env.payload.error,
+    });
   });
   client.on('task.cancelled', (env) => {
     taskList.upsert({ id: env.payload.taskId, prompt: '', state: 'cancelled' });
@@ -290,7 +311,9 @@ async function main(): Promise<void> {
     if (historyPanel?.classList.contains('open')) client.send('history.list', {});
   };
   document.getElementById('history-toggle')?.addEventListener('click', openHistory);
-  document.getElementById('history-close')?.addEventListener('click', () => historyPanel?.classList.remove('open'));
+  document
+    .getElementById('history-close')
+    ?.addEventListener('click', () => historyPanel?.classList.remove('open'));
   document.getElementById('history-new')?.addEventListener('click', () => {
     client.send('history.new', {});
     clearConversation();
@@ -336,7 +359,9 @@ async function main(): Promise<void> {
     watchesPanel?.classList.toggle('open');
     if (watchesPanel?.classList.contains('open')) client.send('watches.list', {});
   });
-  document.getElementById('watches-close')?.addEventListener('click', () => watchesPanel?.classList.remove('open'));
+  document
+    .getElementById('watches-close')
+    ?.addEventListener('click', () => watchesPanel?.classList.remove('open'));
   document.getElementById('watch-form')?.addEventListener('submit', (e) => {
     e.preventDefault();
     const prompt = (document.getElementById('watch-prompt') as HTMLInputElement).value.trim();
@@ -412,8 +437,12 @@ function wirePanels(): void {
   }
 
   const tasksEl = document.getElementById('tasks-panel');
-  document.getElementById('tasks-toggle')?.addEventListener('click', () => tasksEl?.classList.toggle('open'));
-  document.getElementById('tasks-close')?.addEventListener('click', () => tasksEl?.classList.remove('open'));
+  document
+    .getElementById('tasks-toggle')
+    ?.addEventListener('click', () => tasksEl?.classList.toggle('open'));
+  document
+    .getElementById('tasks-close')
+    ?.addEventListener('click', () => tasksEl?.classList.remove('open'));
 }
 
 main();

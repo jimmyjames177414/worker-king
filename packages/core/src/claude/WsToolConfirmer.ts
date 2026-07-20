@@ -5,11 +5,13 @@ import type { ToolConfirmer } from './toolPolicy.js';
 
 /**
  * Requests destructive-tool approval from a connected UI client and awaits the
- * reply, reusing the same request/reply round-trip as screen capture. Prefers the
- * chat window (it shows a visible prompt); falls back to the overlay.
+ * reply, reusing the same request/reply round-trip as screen capture.
  *
- * Fail-closed: if no UI client is connected, or none answers before the timeout,
- * the tool is denied. "Treat the voice port as an unauthenticated houseguest."
+ * Fail-closed: if no chat client is connected, or none answers before the
+ * timeout, the tool is denied. "Treat the voice port as an unauthenticated
+ * houseguest." Only the chat window handles `tool.confirm_request` today (it
+ * shows a visible prompt); the overlay renderer has no handler, so falling
+ * back to it would just wait out the full timeout before denying anyway.
  */
 export class WsToolConfirmer implements ToolConfirmer {
   constructor(
@@ -18,9 +20,7 @@ export class WsToolConfirmer implements ToolConfirmer {
   ) {}
 
   async confirm(req: { tool: string; summary: string }): Promise<boolean> {
-    const client =
-      this.server.findClient((c) => c.role === 'chat') ??
-      this.server.findClient((c) => c.role === 'overlay');
+    const client = this.server.findClient((c) => c.role === 'chat');
     if (!client) return false; // nobody to approve → deny
 
     const request = makeEnvelope(daemonEnvelopeContext, 'tool.confirm_request', {

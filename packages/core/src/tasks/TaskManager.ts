@@ -20,7 +20,12 @@ export interface TaskRunEvents {
 }
 
 export interface TaskRunner {
-  run(prompt: string, events: TaskRunEvents, signal: AbortSignal): Promise<void>;
+  run(
+    prompt: string,
+    events: TaskRunEvents,
+    signal: AbortSignal,
+    opts?: { cwd?: string },
+  ): Promise<void>;
 }
 
 /** What TaskManager emits; the daemon wires these to WS broadcasts. */
@@ -38,6 +43,8 @@ interface RunningTask {
   task: Task;
   abort: AbortController;
   mapper: ProgressMapper;
+  /** Working directory override for this task (delegate_to_worker `folder`). */
+  cwd?: string;
 }
 
 export interface TaskManagerDeps {
@@ -63,7 +70,7 @@ export class TaskManager {
   }
 
   /** Start a task; returns its id immediately (fire-and-forget for the caller). */
-  create(prompt: string): string {
+  create(prompt: string, opts: { cwd?: string } = {}): string {
     const id = this.deps.newId();
     const task: Task = {
       id,
@@ -76,6 +83,7 @@ export class TaskManager {
       task,
       abort: new AbortController(),
       mapper: new ProgressMapper(this.deps.now, this.deps.throttleMs),
+      cwd: opts.cwd,
     };
     this.tasks.set(id, running);
 
@@ -131,6 +139,7 @@ export class TaskManager {
           },
         },
         abort.signal,
+        running.cwd ? { cwd: running.cwd } : undefined,
       );
 
       if (abort.signal.aborted) {

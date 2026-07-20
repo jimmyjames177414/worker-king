@@ -48,7 +48,8 @@ export class TaskStore {
       // crash reconcileOnBoot()/list() later.
       if (Array.isArray(parsed?.tasks)) {
         this.tasks = (parsed.tasks as Task[]).filter(
-          (t) => !!t && typeof t === 'object' && typeof t.id === 'string' && typeof t.state === 'string',
+          (t) =>
+            !!t && typeof t === 'object' && typeof t.id === 'string' && typeof t.state === 'string',
         );
       }
     } catch {

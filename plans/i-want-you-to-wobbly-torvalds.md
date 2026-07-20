@@ -8,14 +8,14 @@
 
 **Why this exists.** The request: study a nearby project and see whether WorkerKing needs a
 "healthy refactoring." The linked page (`github.com/topics/bun?l=typescript&o=desc&s=updated`) is a
-*topic feed*, not a person — there's no `cicero` on it. The repo actually meant is
+_topic feed_, not a person — there's no `cicero` on it. The repo actually meant is
 [`5uck1ess/cicero`](https://github.com/5uck1ess/cicero): a self-hosted **voice interface for coding
 agents** (voice → STT → switchboard → pluggable brain (Claude Code / ACP) → streamed TTS, with async
 delegation and spoken confirmation gates). It is a startlingly close domain sibling to WorkerKing,
 which makes its retrospective docs (`lessons-learned.md`, `performance-portability-evaluation.md`)
 directly transferable.
 
-**Scope decision (confirmed with user):** *assessment only.* No runtime change — WorkerKing stays
+**Scope decision (confirmed with user):** _assessment only._ No runtime change — WorkerKing stays
 Node/Electron/pnpm (Bun is not on the table; Electron embeds Node anyway). This document is a health
 check plus a prioritized, opt-in cleanup roadmap. The user reviews it, then decides what to execute.
 
@@ -29,7 +29,7 @@ utilities to reuse.
 
 From `docs/lessons-learned.md` and `docs/performance-portability-evaluation.md`:
 
-1. **One source of truth for *behavior*, not just code.** Three copies of filler-stripping diverged
+1. **One source of truth for _behavior_, not just code.** Three copies of filler-stripping diverged
    and caused bugs; the fix was a single `stripFillers()`. "DRY is about one source of truth for
    behavior."
 2. **Component-based architecture is what saved them.** The original split (daemon/router/executor/
@@ -53,19 +53,19 @@ From `docs/lessons-learned.md` and `docs/performance-portability-evaluation.md`:
 
 ## Verdict: WorkerKing is healthy — no rewrite
 
-The bones are *better* than the reference. WorkerKing already does, by design, several things
+The bones are _better_ than the reference. WorkerKing already does, by design, several things
 cicero's evaluation had to file as bugs:
 
-| cicero lesson / P0-P1 | WorkerKing status |
-|---|---|
-| Add typecheck+test to CI (#9) | **Already there** — `ci.yml` runs build → typecheck → lint → `test:headless` on every PR |
+| cicero lesson / P0-P1                    | WorkerKing status                                                                                               |
+| ---------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| Add typecheck+test to CI (#9)            | **Already there** — `ci.yml` runs build → typecheck → lint → `test:headless` on every PR                        |
 | Unify providers behind an interface (#6) | **Already there** — `Brain` interface (`ClaudeBackend`/`EchoBrain`/`DeferredBrain`) + `VoiceProvider` interface |
-| Bounded subprocess probe (#4) | **Already there** — `probeClaude` is `withTimeout`-wrapped (`createClaudeBackend.ts:29`) |
-| Don't block on unread stderr (#5) | **Already there** — `DaemonSupervisor` drains `child.stderr` (`DaemonSupervisor.ts:147`) |
-| Component-based seams (#2) | **Stronger** — 3 processes + a `shared` zod/WS contract; core is a headless, Electron-free Node daemon |
-| Test coverage (#3) | **Good in core** — 18 core test files incl. integration (`daemon.test.ts`), injected clocks/spawn |
+| Bounded subprocess probe (#4)            | **Already there** — `probeClaude` is `withTimeout`-wrapped (`createClaudeBackend.ts:29`)                        |
+| Don't block on unread stderr (#5)        | **Already there** — `DaemonSupervisor` drains `child.stderr` (`DaemonSupervisor.ts:147`)                        |
+| Component-based seams (#2)               | **Stronger** — 3 processes + a `shared` zod/WS contract; core is a headless, Electron-free Node daemon          |
+| Test coverage (#3)                       | **Good in core** — 18 core test files incl. integration (`daemon.test.ts`), injected clocks/spawn               |
 
-So the framing is *not* "rescue a mess." It's "a healthy codebase with a handful of the exact
+So the framing is _not_ "rescue a mess." It's "a healthy codebase with a handful of the exact
 DRY/structure smells cicero warned about — fix them cheaply while borrowing their lessons."
 
 ---
@@ -74,7 +74,7 @@ DRY/structure smells cicero warned about — fix them cheaply while borrowing th
 
 Ordered by value-to-risk. Stage 1 is the high-leverage, low-risk core; Stages 2–3 are optional.
 
-### Stage 1 — Single source of truth (cicero lesson #1) — *recommended first*
+### Stage 1 — Single source of truth (cicero lesson #1) — _recommended first_
 
 These are pure DRY consolidations, each with tests already nearby to guard the change (TDD-friendly,
 lesson #3).
@@ -105,11 +105,11 @@ lesson #3).
 Both are untested module-level wiring with mutable module-scope singletons.
 
 - **2a. `packages/core/src/main.ts` (337 lines)** — boot wiring + brain resolution + persona assembly
-  + five top-level mutable singletons (`memory`, `interactionLog`, `conversations`, `watchStore`,
-  `reminderStore`). **Fix:** extract a `createDaemon(deps)` composition function that takes injected
-  stores and returns the wired server; `main.ts` becomes a thin entrypoint. Mirrors the existing
-  dependency-injection style already used in `DaemonSupervisor`/`ClaudeBackend` (both take injected
-  `spawnFn`/`queryFn`), so this is consistent with the codebase, not a new pattern.
+  - five top-level mutable singletons (`memory`, `interactionLog`, `conversations`, `watchStore`,
+    `reminderStore`). **Fix:** extract a `createDaemon(deps)` composition function that takes injected
+    stores and returns the wired server; `main.ts` becomes a thin entrypoint. Mirrors the existing
+    dependency-injection style already used in `DaemonSupervisor`/`ClaudeBackend` (both take injected
+    `spawnFn`/`queryFn`), so this is consistent with the codebase, not a new pattern.
 - **2b. `packages/app/src/main/index.ts` (318 lines)** — config store + IPC + two hotkeys +
   explain-selection + supervision wiring + screen-capture + power-resume, all at module scope.
   **Fix:** split into `registerIpc()`, `registerHotkeys()`, `wireDaemon()` modules called from a slim
@@ -140,10 +140,10 @@ Both are untested module-level wiring with mutable module-scope singletons.
   cards / avatar), and give `config.get` a dedicated `*_result` kind instead of overloading
   `config.changed` (a request/response pair the Supervisor's own comment flags).
 
-### Explicitly *not* recommended
+### Explicitly _not_ recommended
 
 No Bun migration, no build-system swap (Turborepo/nx), no rewrite. TS project references/composite to
-kill the "build core before app" footgun is *tempting* but is a build-graph change with its own risk —
+kill the "build core before app" footgun is _tempting_ but is a build-graph change with its own risk —
 park it unless the manual build ordering becomes a recurring pain.
 
 ---
@@ -166,7 +166,7 @@ Whatever subset is executed, the gate is the same and already wired:
 1. `pnpm build` — must stay clean (libraries build with `tsc`; app via electron-vite).
 2. `pnpm typecheck` — must stay green across all four packages (the contract; cicero's #9 lesson —
    never let TS errors ride).
-3. `pnpm test:headless` — shared + core + voice-providers + app. Add/extend tests *first* for any
+3. `pnpm test:headless` — shared + core + voice-providers + app. Add/extend tests _first_ for any
    Stage 1 consolidation (TDD, cicero #3): a config-schema round-trip test, a `consumeQuery` iterator
    test, a `defineTool` gate/audit test.
 4. `pnpm lint` — flat ESLint config.
@@ -186,19 +186,19 @@ it as the one-command gate after each stage.
 
 Round 1 mined a single sibling (`5uck1ess/cicero`) and found WorkerKing structurally healthy. This
 round widens the net to other self-hosted AI-agent runtimes, voice pipelines, and TS agent frameworks
-to harvest lessons that turn into *behavioral / robustness* improvements — beyond the Round 1 DRY
+to harvest lessons that turn into _behavioral / robustness_ improvements — beyond the Round 1 DRY
 cleanups. Each item below was verified against the actual WorkerKing code (file:line) so these are
 real gaps, not style opinions.
 
 ### Reference repos surveyed
 
 - **[`metaspartan/cybara`](https://github.com/metaspartan/cybara)** — Bun self-hosted agent runtime.
-  Lessons: *tool **policy** is separate from tool **availability*** ("effective policy-filtered subset,
+  Lessons: _tool **policy** is separate from tool **availability**_ ("effective policy-filtered subset,
   not the full catalog every turn" — anti prompt-injection/scope-creep); provider **router + plan/quota
   monitoring** against rolling windows/budgets; multi-modal memory (vector + markdown + logs);
   path-sandbox / SSRF protection; session **context compaction**; checkpoints + rollback.
 - **[`voltagent/voltagent`](https://github.com/voltagent/voltagent)** — TS agent framework. Lessons:
-  **guardrails as runtime validators** in the exec loop (validate input *and* output); **tracing as
+  **guardrails as runtime validators** in the exec loop (validate input _and_ output); **tracing as
   first-class infrastructure** (spans/durations, not bolt-on logs); **evals embedded in the dev loop**;
   Zod-typed tools with **lifecycle hooks + cancellation**; workflow **suspend/resume** for HITL.
 - **LiveKit Agents / Pipecat** (voice-pipeline art) — Lessons: streaming turns total latency from
@@ -212,7 +212,7 @@ real gaps, not style opinions.
 
 ## Verdict (round 2)
 
-The *architecture* is still sound, but the **real-time voice path, the tool-security posture, and
+The _architecture_ is still sound, but the **real-time voice path, the tool-security posture, and
 runtime observability are the three areas where WorkerKing lags the more mature siblings** — and each
 gap was confirmed in code. These are additive features/hardening, not refactors.
 
@@ -227,7 +227,7 @@ gap was confirmed in code. These are additive features/hardening, not refactors.
   ride the `claude_code` preset **ungated and un-sandboxed**. Since voice is an unauthenticated
   interface, add a `canUseTool` confirmation gate — **fail-closed, one-approval-per-call** for
   destructive tools (cicero `confirm_tools`; cybara policy-filtered subset). Wire an explicit
-  `permissionMode` and set it from config. *Files:* `ClaudeBackend.ts` `buildOptions()`,
+  `permissionMode` and set it from config. _Files:_ `ClaudeBackend.ts` `buildOptions()`,
   `main.ts` `claudeOpts`, plus a new confirmation message kind in `shared/protocol.ts`.
 - **N2 · Fix the barge-in stale-reply race (correctness).** On barge-in the local cascade stops TTS
   but **never cancels brain generation**, and when the stale reply resolves it is spoken
@@ -339,6 +339,7 @@ Landed on `claude/app-refactoring-assessment-s2x2ph`, each committed separately,
 (build → typecheck → `test:headless` → lint) green after every group.
 
 **Done**
+
 - **1a** config → one `workerKingConfigSchema`/`DEFAULT_CONFIG`/`CONFIG_KEYS` in `shared`, consumed by
   core `ConfigStore` and the app; validate-on-load. Fixed the `claudeCwd`/personality drift.
 - **1b** shared `ClaudeBackend.consume()` iterator behind `respond()`/`run()`.
@@ -374,7 +375,7 @@ detection, N14 conversation summarization, N15 screenshot redaction.
 
 The one item everything else in `core` hangs off — `packages/core/src/main.ts` — still declares five
 **module-scope mutable singletons** (`memory`, `interactionLog`, `conversations`, `watchStore`,
-`reminderStore`, plus `log`) that are constructed *at import time*. That means importing `main.ts` in a
+`reminderStore`, plus `log`) that are constructed _at import time_. That means importing `main.ts` in a
 test touches `~/.claude/workerking` on disk, the stores can't be swapped for fakes, and `startDaemon`
 is hard to exercise in isolation. This is the last structural smell from Round 1 (Stage 2a). N1 stays
 at `gated` (the recommended, safe default) — no change there.
@@ -386,7 +387,7 @@ harness (N10) so the fuzzy pieces have regression coverage that lives outside th
 ## Phase 1 — 2a: inject the daemon's stores (low risk, headless-testable)
 
 - **Introduce `DaemonDeps`** in `main.ts`: `{ memory, interactionLog, conversations, watchStore,
-  reminderStore, log }`, plus a `createDaemonDeps()` factory that builds the real file-backed stores
+reminderStore, log }`, plus a `createDaemonDeps()` factory that builds the real file-backed stores
   (the code currently at `main.ts:34-38`). Nothing is constructed at module scope anymore, so importing
   `main.ts` has no filesystem side effects.
 - **Thread deps through the wiring**, replacing every closure over the old globals:
@@ -403,7 +404,7 @@ harness (N10) so the fuzzy pieces have regression coverage that lives outside th
 - **Reuse, don't rebuild:** the stores already accept a `dir`/persistence option (e.g. `ConfigStore`,
   `MemoryStore`); tests point them at a `mkdtemp` dir. No store internals change.
 
-Deliberately *not* splitting `main.ts` into multiple files in this phase — the mutable-global removal is
+Deliberately _not_ splitting `main.ts` into multiple files in this phase — the mutable-global removal is
 the substance and is low-risk; a cosmetic file split can follow if it still reads long.
 
 ## Phase 2 — N10: opt-in eval harness (new capability, outside CI)

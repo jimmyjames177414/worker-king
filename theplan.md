@@ -17,7 +17,7 @@ message schemas (zod) so change the protocol there first.
 Every change must keep this gate green (this is also what CI runs):
 
 ```bash
-pnpm build && pnpm typecheck && pnpm lint && pnpm test:headless
+pnpm build && pnpm typecheck && pnpm lint -- --max-warnings 0 && pnpm format:check && pnpm test:headless
 ```
 
 Run a single package, e.g.: `pnpm --filter @workerking/core run test`.
@@ -37,13 +37,14 @@ Run a single package, e.g.: `pnpm --filter @workerking/core run test`.
    ~40 commits, ~33k lines) with four parallel deep-review agents covering:
    (a) the Claude SDK brain + tool-gating security, (b) core daemon infra
    (tasks/WS/memory/watches/history), (c) the Electron app, (d) shared contract
-   + voice + scripts + CI. Every finding was verified against the actual code
-   before being accepted; false positives were dropped.
+   - voice + scripts + CI. Every finding was verified against the actual code
+     before being accepted; false positives were dropped.
 2. **Fixed all verified high/medium findings** in `ef1571e`.
 
 ### Fixes already landed in `ef1571e` — do NOT redo these
 
 **Security (core):**
+
 - `packages/core/src/claude/ClaudeBackend.ts` — `buildOptions` sets
   `settingSources: []` (SDK isolation). Filesystem `permissions.allow` rules in
   `~/.claude` or a project's `.claude/settings.json` (reachable via `claudeCwd`)
@@ -59,6 +60,7 @@ Run a single package, e.g.: `pnpm --filter @workerking/core run test`.
   Bash confirm summaries show up to 1000 chars with a loud truncation marker.
 
 **Correctness (core):**
+
 - `packages/core/src/brain/Brain.ts` — `Brain` gained optional
   `resetSession()` / `getLastUsage()`; `DeferredBrain` delegates both (they were
   unreachable in production, so "New chat" never reset the model and usage
@@ -98,6 +100,7 @@ Run a single package, e.g.: `pnpm --filter @workerking/core run test`.
   dir (was reading/writing the developer's real `~/.claude/workerking`).
 
 **Config (shared + core):**
+
 - `packages/shared/src/domain.ts` — `parseConfig` salvages PER KEY (one bad key
   used to wipe the whole config to defaults); new `validateConfigValue` rejects
   prototype-polluting keys (`__proto__`/`constructor`/`prototype`).
@@ -105,6 +108,7 @@ Run a single package, e.g.: `pnpm --filter @workerking/core run test`.
   persisting (was `z.unknown()` straight to disk); atomic writes.
 
 **App (Electron):**
+
 - `packages/app/src/main/DaemonClient.ts` + `index.ts` +
   `renderer/shared/wsClient.ts` — daemon crash-restart now RESTORES service: on
   the supervisor `restarted` event, main's client calls `updateConnection(conn)`
@@ -124,6 +128,7 @@ Run a single package, e.g.: `pnpm --filter @workerking/core run test`.
 - `packages/app/src/main/ipc.ts` — `wk:set-config` rejects prototype keys.
 
 **Voice:**
+
 - `packages/voice-providers/src/localEngines.ts` — `KokoroTtsEngine` has a
   barge-in epoch (stop() bumps it; speak() checks it after each await) so a
   sentence mid-synthesis can't start playing after the user barges in; tracks a
@@ -150,61 +155,9 @@ Run a single package, e.g.: `pnpm --filter @workerking/core run test`.
 
 ## What's LEFT (deferred — verified real, but lower severity)
 
-These were found and confirmed during review but intentionally NOT fixed in
-`ef1571e` (none corrupts data or breaks a security boundary). Pick them up in
-roughly this order. **Read the file and confirm the issue still exists before
-changing anything** — line numbers may have drifted.
-
-1. **Routing scorer is noisy/gameable** — `packages/shared/src/routing.ts:49`.
-   The bidirectional-substring rule `h.includes(q) || q.includes(h)` matches
-   2-char tokens (`"go"` ⊂ `"google"`), and description/hint token scores have
-   no cap, so a keyword-stuffed capability description can outrank an exact
-   name match. Fix: require substring candidates to be length ≥ 3 both ways, and
-   cap the description/hint-derived contribution per entry (e.g. at 4). Update
-   `packages/shared/src/routing.test.ts`. (NOTE: this was assigned to a fix agent
-   that hit a session limit before doing it — `routing.ts` is unchanged from the
-   reviewed baseline.)
-
-2. **Concurrent chat messages fork the SDK session** —
-   `packages/core/src/supervisor/Supervisor.ts` `handleChat`. Two rapid
-   `chat.user_message`s both start before the other's `resume` id is set, so the
-   thread forks and last-writer-wins on `sessionId`. Fix: serialize chat turns
-   (a per-supervisor promise chain so `handleChat` bodies run one at a time).
-   Keep the streaming behavior; just gate concurrency.
-
-3. **Realtime tool schemas are discarded** —
-   `packages/voice-providers/src/createRealtimeSessionFactory.ts:18`
-   (`parameters: z.object({}).passthrough()`). The JSON Schemas from
-   `VoiceHost.supervisorTools()` never reach the model, so the voice model can
-   call `delegate_to_worker` with no `task`. Fix: pass the real per-tool
-   parameter schema through the factory to the realtime session.
-
-4. **`WsToolConfirmer` has no tests** —
-   `packages/core/src/claude/WsToolConfirmer.ts` (no `.test.ts` beside it). The
-   security-critical behaviors (timeout → deny, no client → deny, malformed
-   reply → deny) are implemented but unasserted. Add a test with a fake
-   `WsServer` seam. Related: its "fall back to the overlay" path targets a
-   renderer with no `tool.confirm_request` handler — either remove the fallback
-   or add a handler in `packages/app/src/renderer/overlay`.
-
-5. **CI hygiene** — `.github/workflows/ci.yml`. `format:check` (Prettier) is
-   never run, and eslint downgrades `no-unused-vars`/`no-explicit-any` to `warn`
-   with no `--max-warnings 0`, so drift/warnings never fail CI. Decide whether to
-   gate them (add `pnpm format:check` step and/or `--max-warnings 0`).
-
-6. **`run-with-logs.ps1` arg injection (dev-only footgun)** —
-   `scripts/run-with-logs.ps1:52,55`. `$ExtraArgs` is interpolated raw into a
-   `cmd /c` string, so `&`/`|`/`>` in args are interpreted by cmd. Local dev
-   script run by the repo owner, so low priority; fix by passing args as an
-   array to `Start-Process` instead of string interpolation. Also
-   `tail-logs/<target>.pid` is overwritten if the script runs twice for the same
-   target (orphans the first tree).
-
-7. **Streaming-bubble map leak** —
-   `packages/app/src/renderer/chat/main.ts:224` (`bubbles` map). If
-   `chat.assistant_done` never arrives (daemon dies mid-stream), the entry lives
-   forever and the half-streamed bubble is never finalized. Low impact; consider
-   a timeout/cleanup on disconnect.
+Items 1–7 and 10 below were picked up and fixed in a follow-up pass (see
+"Second pass" below for the commit-level detail). Items 8–9 remain intentionally
+deferred.
 
 8. **GPT-Realtime provider debt (acknowledged stubs, not accidents)** —
    `packages/voice-providers/src/GptRealtimeProvider.ts:111-119` injects every
@@ -217,11 +170,49 @@ changing anything** — line numbers may have drifted.
    `^3.x`. Harmless today because no shared zod schema crosses into
    voice-providers; will bite the first time one does. Note only.
 
-10. **`claudeCwd` has no validation** — the WS `config.set` value is
-    `z.unknown()`, so a non-string/nonexistent dir reaches the SDK `cwd` and each
-    message fails with a spawn error. Now much lower risk since `settingSources: []`
-    closed the hostile-settings vector, but consider validating it's an existing
-    directory in `Supervisor.handleConfigSet` or `ConfigStore.set`.
+## Second pass — deferred items 1–7 + 10 fixed (this session)
+
+Gate status after this pass: **green** — build, typecheck, lint (0 warnings),
+format:check, and test:headless all pass. (One known pre-existing Windows-only
+flaky test: `MemoryStore.test.ts` "summary is budget-capped" occasionally hits
+an `EPERM` on `renameSync` under full-suite parallel load; passes reliably in
+isolation/re-run and is unrelated to any change here.)
+
+1. **Routing scorer** — `packages/shared/src/routing.ts` `scoreCapability` now
+   requires partial-match substrings to be length ≥ 3 both ways, and caps the
+   hint/description-derived contribution at 4 points so it can't outrank an
+   exact name match (worth 4). Added tests to `routing.test.ts`.
+2. **Concurrent chat messages** — `Supervisor` gained a `chatChain` promise
+   chain; `handleChat` now enqueues `runChatTurn` onto it so turns run one at a
+   time (a rejected turn doesn't wedge the chain — it's isolated via `.catch`).
+   Added `packages/core/src/supervisor/Supervisor.test.ts` asserting
+   `brain.respond` never runs concurrently for two rapid turns.
+3. **Realtime tool schemas** — `createRealtimeSessionFactory.ts` now forwards
+   each `VoiceToolSpec`'s real `properties`/`required` into the `tool()` JSON
+   Schema (previously `z.object({}).passthrough()`), so the realtime model sees
+   actual argument shapes.
+4. **`WsToolConfirmer` tests** — added
+   `packages/core/src/claude/WsToolConfirmer.test.ts` covering no-client-deny,
+   timeout-deny, malformed-reply-deny, approve, and deny-explicit paths. Also
+   removed the dead "fall back to the overlay" path (the overlay renderer has no
+   `tool.confirm_request` handler, so it only ever timed out) — `confirm()` now
+   only targets the chat client and denies immediately if none is connected.
+5. **CI hygiene** — ran a repo-wide `pnpm format` (63 files were drifted from
+   Prettier) and added `format:check` + `lint -- --max-warnings 0` to
+   `.github/workflows/ci.yml`.
+6. **`run-with-logs.ps1` arg injection** — `-ExtraArgs` is now `[string[]]`,
+   rejected outright if any element contains a shell metacharacter (`&|<>^`),
+   and each element is individually quoted before being interpolated into the
+   `cmd /c` string. Also: a previous still-tracked runner for the same `-Target`
+   is now tree-killed before starting a new one (previously the `.pid` file was
+   silently overwritten, orphaning the old process tree).
+7. **Streaming-bubble map leak** — `packages/app/src/renderer/chat/main.ts`'s
+   `bubbles` map now tracks a `lastUpdate` timestamp per entry; a 15s sweep
+   finalizes (and removes) any bubble stale for 60s+ so a daemon death
+   mid-stream can't leak the entry/element forever.
+8. **`claudeCwd` validation** — `ConfigStore.set` now rejects a `claudeCwd`
+   that isn't an existing directory (empty/undefined still clears it). Added
+   tests to `ConfigStore.test.ts`.
 
 ## How to work here (gotchas for the next agent)
 

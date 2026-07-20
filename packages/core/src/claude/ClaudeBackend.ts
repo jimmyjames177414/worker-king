@@ -1,5 +1,6 @@
 import type { Options, SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { Brain } from '../brain/Brain.js';
+import { createLogger, type Logger } from '../util/logger.js';
 
 /**
  * ClaudeBackend — the real brain, backed by the Claude Agent SDK.
@@ -57,6 +58,8 @@ export interface ClaudeBackendOptions {
   mcpServers?: Options['mcpServers'];
   /** Tool names allowed without a permission prompt (e.g. the WorkerKing tools). */
   allowedTools?: string[];
+  /** Structured logger (defaults to a child of the root daemon logger). */
+  log?: Logger;
 }
 
 export class ClaudeAuthError extends Error {
@@ -98,16 +101,34 @@ export class ClaudeBackend implements Brain {
   private cwdInitialized = false;
   /** Usage from the most recent completed turn (N9 — feeds budget awareness). */
   private lastUsage: ClaudeUsage | undefined;
+  private readonly log: Logger;
 
-  constructor(private readonly opts: ClaudeBackendOptions) {}
+  constructor(private readonly opts: ClaudeBackendOptions) {
+    this.log = opts.log ?? createLogger({ scope: 'claude' });
+  }
 
-  private buildOptions(o: { resume?: boolean } = {}): Options {
+  private buildOptions(o: { resume?: boolean; cwdOverride?: string } = {}): Options {
     const append = this.opts.personaProvider?.() ?? this.opts.personaAppend;
-    const cwd = this.opts.cwdProvider?.() ?? this.opts.cwd;
-    // Repoint to a different project → don't resume the old project's session (F1).
-    if (this.cwdInitialized && cwd !== this.lastCwd) this.sessionId = undefined;
-    this.lastCwd = cwd;
-    this.cwdInitialized = true;
+    const cwd = o.cwdOverride ?? this.opts.cwdProvider?.() ?? this.opts.cwd;
+    // Repoint to a different project → don't resume the old project's session
+    // (F1). A one-shot task override is NOT a repoint: it must neither reset the
+    // chat session nor pollute the cwd tracking the chat path relies on.
+    if (!o.cwdOverride) {
+      if (this.cwdInitialized && cwd !== this.lastCwd) {
+        // This is a real, user-visible discontinuity: the next reply starts a
+        // fresh Claude session with no memory of the conversation so far. Log it
+        // at 'warn' (not 'info') so it stands out in a "why did the AI forget
+        // everything / seem to reset" investigation.
+        this.log.warn('session reset: cwd changed', {
+          from: this.lastCwd,
+          to: cwd,
+          droppedSessionId: this.sessionId,
+        });
+        this.sessionId = undefined;
+      }
+      this.lastCwd = cwd;
+      this.cwdInitialized = true;
+    }
     const options: Options = {
       systemPrompt: {
         type: 'preset',
@@ -157,7 +178,10 @@ export class ClaudeBackend implements Brain {
         }
         case 'assistant': {
           if (handlers.onToolUse) {
-            for (const name of extractToolUses(msg)) handlers.onToolUse(name);
+            for (const name of extractToolUses(msg)) {
+              this.log.debug('tool_use', { name });
+              handlers.onToolUse(name);
+            }
           }
           break;
         }
@@ -168,7 +192,13 @@ export class ClaudeBackend implements Brain {
           if (o.trackSession !== false) this.sessionId = msg.session_id;
           this.lastUsage = extractUsage(msg);
           if (msg.subtype === 'success') resultText = msg.result;
-          else throw this.normalizeError(new Error(`Claude ended with "${msg.subtype}"`), msg.subtype);
+          else {
+            this.log.warn('turn ended non-success', {
+              subtype: msg.subtype,
+              sessionId: msg.session_id,
+            });
+            throw this.normalizeError(new Error(`Claude ended with "${msg.subtype}"`), msg.subtype);
+          }
           break;
         }
         default:
@@ -182,6 +212,12 @@ export class ClaudeBackend implements Brain {
   async respond(text: string, onDelta: (delta: string) => void): Promise<string> {
     let streamed = '';
     let resultText: string;
+    const resuming = Boolean(this.sessionId);
+    this.log.debug('respond start', {
+      chars: text.length,
+      resuming,
+      sessionId: this.sessionId,
+    });
     try {
       const iterable = this.opts.queryFn({ prompt: text, options: this.buildOptions() });
       resultText = await this.consume(iterable, {
@@ -191,11 +227,19 @@ export class ClaudeBackend implements Brain {
         },
       });
     } catch (err) {
-      throw this.normalizeError(err);
+      const normalized = this.normalizeError(err);
+      this.log.warn('respond failed', {
+        kind: normalized.name,
+        error: normalized.message,
+        resuming,
+      });
+      throw normalized;
     }
     // The streamed text is what the user watched appear; prefer it. Fall back to
     // the result string if partial streaming produced nothing (e.g. a terse turn).
-    return streamed.length > 0 ? streamed : resultText;
+    const final = streamed.length > 0 ? streamed : resultText;
+    this.log.debug('respond done', { chars: final.length, sessionId: this.sessionId });
+    return final;
   }
 
   /**
@@ -212,6 +256,7 @@ export class ClaudeBackend implements Brain {
       onError(err: Error): void;
     },
     signal: AbortSignal,
+    runOpts?: { cwd?: string },
   ): Promise<void> {
     // A task cancelled while the brain was still warming arrives pre-aborted;
     // addEventListener on an aborted signal never fires, so check up front or
@@ -224,7 +269,10 @@ export class ClaudeBackend implements Brain {
     // Delegated tasks are sessionless on purpose: sharing the chat session
     // would leak chat context into tasks and let concurrent task completions
     // hijack which thread the *next chat message* resumes (last-writer-wins).
-    const options: Options = { ...this.buildOptions({ resume: false }), abortController: abort };
+    const options: Options = {
+      ...this.buildOptions({ resume: false, cwdOverride: runOpts?.cwd }),
+      abortController: abort,
+    };
     try {
       const resultText = await this.consume(
         this.opts.queryFn({ prompt, options }),
@@ -236,7 +284,9 @@ export class ClaudeBackend implements Brain {
       );
       if (!signal.aborted) events.onDone(resultText || 'Done.');
     } catch (err) {
-      if (!signal.aborted) events.onError(this.normalizeError(err));
+      const normalized = this.normalizeError(err);
+      this.log.warn('task run failed', { kind: normalized.name, error: normalized.message });
+      if (!signal.aborted) events.onError(normalized);
     } finally {
       signal.removeEventListener('abort', onAbort);
     }
@@ -244,6 +294,7 @@ export class ClaudeBackend implements Brain {
 
   /** Reset conversation continuity (start a fresh Claude session next message). */
   resetSession(): void {
+    if (this.sessionId) this.log.debug('session reset: explicit', { droppedSessionId: this.sessionId });
     this.sessionId = undefined;
   }
 

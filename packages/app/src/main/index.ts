@@ -1,4 +1,11 @@
-import { app, globalShortcut, BrowserWindow, powerMonitor, Notification, clipboard } from 'electron';
+import {
+  app,
+  globalShortcut,
+  BrowserWindow,
+  powerMonitor,
+  Notification,
+  clipboard,
+} from 'electron';
 import { randomUUID } from 'node:crypto';
 import { createWriteStream } from 'node:fs';
 import { mkdirSync } from 'node:fs';
@@ -73,7 +80,9 @@ const hotkeys = new HotkeyManager(globalShortcut, {
 function registerHotkey(accelerator: string): boolean {
   const ok = hotkeys.setPushToTalk(accelerator);
   if (!ok) {
-    process.stderr.write(`[workerking] failed to register hotkey "${accelerator}" (invalid or taken)\n`);
+    process.stderr.write(
+      `[workerking] failed to register hotkey "${accelerator}" (invalid or taken)\n`,
+    );
   }
   return ok;
 }
@@ -81,7 +90,9 @@ function registerHotkey(accelerator: string): boolean {
 function registerExplainHotkey(accelerator: string): boolean {
   const ok = hotkeys.setExplain(accelerator);
   if (!ok) {
-    process.stderr.write(`[workerking] failed to register explain hotkey "${accelerator}" (invalid or taken)\n`);
+    process.stderr.write(
+      `[workerking] failed to register explain hotkey "${accelerator}" (invalid or taken)\n`,
+    );
   }
   return ok;
 }
@@ -138,7 +149,10 @@ async function boot(): Promise<void> {
   // Proactive notices → Windows toast (the overlay speaks them separately over WS).
   daemonClient.on('proactive.notify', (env) => {
     if (Notification.isSupported()) {
-      new Notification({ title: config.get('assistantName') || 'WorkerKing', body: env.payload.text }).show();
+      new Notification({
+        title: config.get('assistantName') || 'WorkerKing',
+        body: env.payload.text,
+      }).show();
     }
   });
   // Explain-hotkey replies (chat.assistant_done matched by messageId) → toast + speak.
@@ -171,7 +185,8 @@ async function boot(): Promise<void> {
       // Hotkeys bind first and only persist on success — an invalid/taken
       // accelerator written to config would otherwise break every boot.
       if (key === 'hotkey' && typeof value === 'string' && !registerHotkey(value)) return;
-      if (key === 'explainHotkey' && typeof value === 'string' && !registerExplainHotkey(value)) return;
+      if (key === 'explainHotkey' && typeof value === 'string' && !registerExplainHotkey(value))
+        return;
       config.set(key, value as WorkerKingConfig[keyof WorkerKingConfig]);
       daemonClient?.send('config.set', { key, value });
     },
@@ -188,7 +203,10 @@ async function boot(): Promise<void> {
   chat = createChatWindow();
 
   // Forward renderer console output to main stderr so the log runner captures it.
-  for (const [label, win] of [['overlay', overlay], ['chat', chat]] as const) {
+  for (const [label, win] of [
+    ['overlay', overlay],
+    ['chat', chat],
+  ] as const) {
     win.webContents.on('console-message', (_e, _level, msg) => {
       process.stderr.write(`[renderer:${label}] ${msg}\n`);
     });
@@ -232,7 +250,10 @@ function explainSelection(): void {
   const text = clipboard.readText().trim();
   if (!text) {
     if (Notification.isSupported()) {
-      new Notification({ title: 'WorkerKing', body: 'Select or copy some text first, then press the hotkey.' }).show();
+      new Notification({
+        title: 'WorkerKing',
+        body: 'Select or copy some text first, then press the hotkey.',
+      }).show();
     }
     return;
   }
@@ -251,10 +272,13 @@ function explainSelection(): void {
   });
 }
 
-app.whenReady().then(boot).catch((err) => {
-  process.stderr.write(`[workerking] failed to boot: ${String(err)}\n`);
-  app.quit();
-});
+app
+  .whenReady()
+  .then(boot)
+  .catch((err) => {
+    process.stderr.write(`[workerking] failed to boot: ${String(err)}\n`);
+    app.quit();
+  });
 
 app.on('before-quit', () => {
   quitting = true;

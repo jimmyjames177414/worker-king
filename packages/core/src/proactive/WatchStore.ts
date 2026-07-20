@@ -97,7 +97,12 @@ export class WatchStore {
   add(prompt: string, cron: string): Watch {
     if (!prompt.trim()) throw new Error('watch prompt is required');
     if (!isValidCron(cron)) throw new Error(`invalid cron expression: "${cron}"`);
-    const watch: Watch = { id: this.newId(), prompt: prompt.trim(), cron: cron.trim(), builtin: false };
+    const watch: Watch = {
+      id: this.newId(),
+      prompt: prompt.trim(),
+      cron: cron.trim(),
+      builtin: false,
+    };
     this.watches.push(watch);
     this.persist();
     return watch;

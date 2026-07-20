@@ -54,4 +54,33 @@ describe('ConfigStore', () => {
     const store = new ConfigStore(undefined, { persist: true, dir });
     expect(store.get('assistantName')).toBe('WorkerKing');
   });
+
+  it('rejects a claudeCwd that does not point at an existing directory', () => {
+    const store = new ConfigStore();
+    store.set('claudeCwd', '/definitely/not/a/real/path/xyz');
+    expect(store.get('claudeCwd')).toBeUndefined();
+  });
+
+  it('rejects a claudeCwd that points at a file, not a directory', () => {
+    const dir = tempDir();
+    const filePath = join(dir, 'not-a-dir.txt');
+    writeFileSync(filePath, 'hi', 'utf8');
+    const store = new ConfigStore();
+    store.set('claudeCwd', filePath);
+    expect(store.get('claudeCwd')).toBeUndefined();
+  });
+
+  it('accepts a claudeCwd that is a real directory', () => {
+    const dir = tempDir();
+    const store = new ConfigStore();
+    store.set('claudeCwd', dir);
+    expect(store.get('claudeCwd')).toBe(dir);
+  });
+
+  it('allows clearing claudeCwd back to unset', () => {
+    const dir = tempDir();
+    const store = new ConfigStore({ claudeCwd: dir });
+    store.set('claudeCwd', undefined);
+    expect(store.get('claudeCwd')).toBeUndefined();
+  });
 });

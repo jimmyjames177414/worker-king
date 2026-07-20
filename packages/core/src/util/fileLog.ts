@@ -16,7 +16,10 @@ export function installFileLog(): void {
   if (!file) return;
   try {
     mkdirSync(dirname(file), { recursive: true });
-    appendFileSync(file, `\n===== daemon start ${new Date().toISOString()} (pid ${process.pid}) =====\n`);
+    appendFileSync(
+      file,
+      `\n===== daemon start ${new Date().toISOString()} (pid ${process.pid}) =====\n`,
+    );
     teeStream(process.stdout, file);
     teeStream(process.stderr, file);
   } catch {

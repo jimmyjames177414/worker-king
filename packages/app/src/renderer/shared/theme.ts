@@ -33,8 +33,7 @@ export interface ApplyThemeOptions {
 export function applyTheme(pref: ThemePref, opts: ApplyThemeOptions = {}): 'light' | 'dark' {
   const prefersDark =
     opts.prefersDark ??
-    (typeof window !== 'undefined' &&
-      window.matchMedia('(prefers-color-scheme: dark)').matches);
+    (typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: dark)').matches);
   const resolved = resolveTheme(pref, prefersDark === true);
   const root = opts.root ?? document.documentElement;
   root.style.colorScheme = resolved;

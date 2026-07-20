@@ -35,7 +35,12 @@ export interface VoiceTurnDelegate {
   onSpeechStart?(): void;
   /** Normalized output-audio amplitude (0..1) for the audio-reactive avatar. */
   onAudioLevel?(level: number): void;
-  onError(err: Error): void;
+  /**
+   * `fatal: true` means the provider's session is dead and could not recover —
+   * the host should tear down and tell the user how to restart. Non-fatal
+   * errors (e.g. one STT failure) leave the session usable.
+   */
+  onError(err: Error, info?: { fatal?: boolean }): void;
 }
 
 export interface VoiceStartOptions {

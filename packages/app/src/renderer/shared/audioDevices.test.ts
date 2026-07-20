@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { audioInputConstraints, applyOutputDevice, applyOutputDeviceToDom } from './audioDevices.js';
+import {
+  audioInputConstraints,
+  applyOutputDevice,
+  applyOutputDeviceToDom,
+} from './audioDevices.js';
 
 describe('audioInputConstraints', () => {
   it('requests the system default when no device is chosen', () => {

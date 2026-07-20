@@ -10,12 +10,12 @@ not use `npm` or `yarn`.
 
 ## Architecture — three processes, one localhost WebSocket bus
 
-| Process | Runtime | Role |
-|---|---|---|
-| Electron **main** | Node (Electron) | windows, tray, global hotkey, secrets, spawns/supervises the daemon |
-| Renderer: **overlay** | Chromium | avatar state machine + voice (mic/WebRTC) |
-| Renderer: **chat** | Chromium | text chat, transcript, tasks, settings |
-| Core **daemon** | plain Node (**zero Electron imports**) | Claude Agent SDK, supervisor, tasks, capability manifest, config, memory, **WS server** |
+| Process               | Runtime                                | Role                                                                                    |
+| --------------------- | -------------------------------------- | --------------------------------------------------------------------------------------- |
+| Electron **main**     | Node (Electron)                        | windows, tray, global hotkey, secrets, spawns/supervises the daemon                     |
+| Renderer: **overlay** | Chromium                               | avatar state machine + voice (mic/WebRTC)                                               |
+| Renderer: **chat**    | Chromium                               | text chat, transcript, tasks, settings                                                  |
+| Core **daemon**       | plain Node (**zero Electron imports**) | Claude Agent SDK, supervisor, tasks, capability manifest, config, memory, **WS server** |
 
 The three UI processes reach the daemon over `localhost` WebSocket. Native-Windows vs WSL is only a
 deployment detail — the daemon runs wherever Claude Code lives and the UI connects either way.
@@ -56,7 +56,7 @@ Run a single package with a filter, e.g. `pnpm --filter @workerking/core run bui
 
 - **Windows-only UI.** The overlay, tray, and global hotkey need a Windows desktop; `pnpm app` only
   runs meaningfully on Windows. The daemon and headless tests run anywhere.
-- **The app spawns the *built* daemon** — run `pnpm --filter @workerking/core run build` before
+- **The app spawns the _built_ daemon** — run `pnpm --filter @workerking/core run build` before
   `pnpm app`, or the shell launches stale/absent daemon output.
 - **Readiness handshake.** The daemon prints a `WORKERKING_READY {port,token,...}` line on stdout
   once its WS server is listening; the Electron main waits for that before connecting. The runtime
@@ -74,8 +74,9 @@ snapshot it. (Mirrors Amethyst's `runbook` + `tail-logs`, adapted to this pnpm/N
 - Stop everything: `scripts/stop-logs.ps1` (tree-kill; leaves `.log` files for post-mortem)
 
 Two log sources, both read by `tail-logs.ps1` (everything under `tail-logs/` is gitignored):
+
 - `tail-logs/<target>.log` — merged stdout+stderr captured by the runner
-- `tail-logs/app-logs/daemon.log` — the daemon's *own* file log, written whenever
+- `tail-logs/app-logs/daemon.log` — the daemon's _own_ file log, written whenever
   `WORKERKING_LOG_FILE` is set (the runners, the VS Code tasks, and both F5 profiles all set it)
 
 Equivalent VS Code tasks: **Run Daemon/App (Claude Logs)**, **Tail Logs**, **Tail Logs (errors)**,

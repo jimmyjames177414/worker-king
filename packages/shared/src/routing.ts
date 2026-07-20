@@ -16,8 +16,29 @@ export interface RankedCapability {
 }
 
 const STOP = new Set([
-  'the', 'a', 'an', 'to', 'of', 'and', 'or', 'for', 'with', 'my', 'me', 'i',
-  'can', 'you', 'please', 'how', 'do', 'is', 'it', 'on', 'in', 'this', 'that',
+  'the',
+  'a',
+  'an',
+  'to',
+  'of',
+  'and',
+  'or',
+  'for',
+  'with',
+  'my',
+  'me',
+  'i',
+  'can',
+  'you',
+  'please',
+  'how',
+  'do',
+  'is',
+  'it',
+  'on',
+  'in',
+  'this',
+  'that',
 ]);
 
 export function tokenize(text: string): string[] {
@@ -38,17 +59,29 @@ export function deriveRoutingHints(name: string, description: string): string[] 
 export function scoreCapability(queryTerms: string[], entry: CapabilityManifestEntry): number {
   const nameTokens = new Set(tokenize(entry.name));
   const hay = new Set<string>([
-    ...nameTokens,
     ...tokenize(entry.description),
     ...(entry.routingHints ?? []).map((h) => h.toLowerCase()),
   ]);
   let score = 0;
+  let hintScore = 0;
   for (const q of queryTerms) {
-    if (nameTokens.has(q)) score += 4; // matching the name is the strongest signal
-    else if (hay.has(q)) score += 2; // exact hint/description token
-    else if ([...hay].some((h) => h.includes(q) || q.includes(h))) score += 1; // partial
+    if (nameTokens.has(q)) {
+      score += 4; // matching the name is the strongest signal
+      continue;
+    }
+    if (hay.has(q)) {
+      hintScore += 2; // exact hint/description token
+      continue;
+    }
+    // Partial match: require substrings of length >= 3 both ways so short
+    // tokens (e.g. "go" ⊂ "google") can't spuriously match everything.
+    if (q.length >= 3 && [...hay].some((h) => h.length >= 3 && (h.includes(q) || q.includes(h)))) {
+      hintScore += 1;
+    }
   }
-  return score;
+  // Cap the description/hint-derived contribution so a keyword-stuffed
+  // description can't outrank an exact name match.
+  return score + Math.min(hintScore, 4);
 }
 
 /** Rank capabilities by relevance to `query`; only positive scores are returned. */

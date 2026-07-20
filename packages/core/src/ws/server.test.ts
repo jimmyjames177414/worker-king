@@ -130,7 +130,12 @@ describe('runHeartbeat', () => {
 
 describe('WsServer heartbeat integration', () => {
   it('keeps a responsive client after a sweep', async () => {
-    const server = new WsServer({ token: 'tok', host: 'windows', daemonVersion: '0', heartbeatMs: 0 });
+    const server = new WsServer({
+      token: 'tok',
+      host: 'windows',
+      daemonVersion: '0',
+      heartbeatMs: 0,
+    });
     const port = await server.start(0);
     const c = connect(port, 'tok');
     await c.next(); // welcome

@@ -12,7 +12,7 @@
     "build": "pnpm -r --filter \"./packages/*\" run build",
     "typecheck": "pnpm -r run typecheck",
     "test": "pnpm -r run test",
-    "test:headless": "pnpm --filter @workerking/shared --filter @workerking/core --filter @workerking/voice-providers --filter @workerking/app run test",
+    "test:headless": "pnpm --filter @workerking/shared --filter @workerking/core --filter @workerking/voice-providers --filter @workerking/wakeword-openwakeword --filter @workerking/app run test",
     "eval": "pnpm --filter @workerking/core run eval",
     "daemon": "pnpm --filter @workerking/core run start",
     "app": "pnpm --filter @workerking/app run dev",

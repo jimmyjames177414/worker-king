@@ -1,10 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import {
-  workerKingConfigSchema,
-  DEFAULT_CONFIG,
-  CONFIG_KEYS,
-  parseConfig,
-} from './domain.js';
+import { workerKingConfigSchema, DEFAULT_CONFIG, CONFIG_KEYS, parseConfig } from './domain.js';
 
 describe('WorkerKing config schema', () => {
   it('DEFAULT_CONFIG satisfies the schema', () => {
@@ -35,7 +30,9 @@ describe('WorkerKing config schema', () => {
   });
 
   it('parseConfig rejects prototype-polluting keys', () => {
-    const out = parseConfig(JSON.parse('{"__proto__": {"polluted": true}, "assistantName": "Bea"}'));
+    const out = parseConfig(
+      JSON.parse('{"__proto__": {"polluted": true}, "assistantName": "Bea"}'),
+    );
     expect(Object.keys(out)).toEqual(['assistantName']);
     expect(({} as Record<string, unknown>).polluted).toBeUndefined();
   });

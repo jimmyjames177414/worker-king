@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { routeRequest, deriveRoutingHints, tokenize, type RankedCapability } from './routing.js';
+import {
+  routeRequest,
+  deriveRoutingHints,
+  tokenize,
+  scoreCapability,
+  type RankedCapability,
+} from './routing.js';
 import type { CapabilityManifestEntry } from './domain.js';
 
 function entry(
@@ -53,5 +59,19 @@ describe('routeRequest', () => {
   it('honors the limit', () => {
     const ranked = routeRequest('app files screen', entries, { limit: 1 });
     expect(ranked).toHaveLength(1);
+  });
+
+  it('does not let a short 2-char token substring-match everything', () => {
+    // "go" is a substring of "google", but should not score as a partial match.
+    expect(scoreCapability(['go'], entry('deploy', 'ship the app to production'))).toBe(0);
+  });
+
+  it('caps the description/hint-derived contribution below a name match', () => {
+    // Five distinct hint words each worth 2 points (=10 uncapped) must not beat
+    // a name match plus a couple of its own hint hits.
+    const stuffed = entry('zzz', 'alpha bravo charlie delta echo');
+    const exactName = entry('alpha', 'alpha bravo');
+    const ranked = routeRequest('alpha bravo charlie delta echo', [stuffed, exactName]);
+    expect(ranked[0].entry.name).toBe('alpha');
   });
 });

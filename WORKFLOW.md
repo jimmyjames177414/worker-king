@@ -6,13 +6,16 @@ no git remote yet — so the loop is local: branch, build, implement, tidy, veri
 ## Steps
 
 1. **Branch** — start feature work off `main`:
+
    ```bash
    git checkout -b <kebab-case-feature>
    ```
+
    (Plans, when written, live under `plans/` per `.claude/settings.json`.)
 
 2. **Establish a green baseline** — before touching code, confirm the tree builds and typechecks so
    later failures are clearly yours:
+
    ```bash
    pnpm install       # if deps changed / fresh clone
    pnpm build
@@ -27,7 +30,7 @@ no git remote yet — so the loop is local: branch, build, implement, tidy, veri
    code, redundant comments, DRY violations). It re-verifies afterward.
 
 5. **Verify** — run `/verify`. It runs the ordered gate `pnpm build → pnpm typecheck →
-   pnpm test:headless`, stopping on the first failure. For UI changes that need a real desktop,
+pnpm test:headless`, stopping on the first failure. For UI changes that need a real desktop,
    additionally launch `pnpm app` on Windows and sanity-check the overlay/chat.
 
 6. **Commit** — once verify is green:

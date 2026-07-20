@@ -72,7 +72,12 @@ export class MemoryStore {
   }
 
   /** Store or update a memory (update-not-append: same key overwrites). */
-  remember(key: string, value: string, scope: MemoryScope = 'fact', provenance = 'remember-tool'): void {
+  remember(
+    key: string,
+    value: string,
+    scope: MemoryScope = 'fact',
+    provenance = 'remember-tool',
+  ): void {
     const existing = this.entries.find((e) => e.key === key);
     if (existing) {
       existing.value = value;
@@ -136,7 +141,8 @@ export class MemoryStore {
     const stale = this.entries.filter((e) => e.stale);
     const fmt = (e: MemoryEntry) =>
       `- **${e.key}** (${e.scope}): ${e.value}  \n  _${new Date(e.ts).toISOString()} · ${e.provenance}_`;
-    let md = '# WorkerKing memory\n\n> Auto-managed by WorkerKing. You can hand-edit `memories.json`.\n\n';
+    let md =
+      '# WorkerKing memory\n\n> Auto-managed by WorkerKing. You can hand-edit `memories.json`.\n\n';
     md += live.length ? live.map(fmt).join('\n') + '\n' : '_No memories yet._\n';
     if (stale.length) md += '\n## Stale (kept for audit)\n' + stale.map(fmt).join('\n') + '\n';
     return md;

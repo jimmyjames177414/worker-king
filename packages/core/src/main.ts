@@ -5,8 +5,12 @@ import { WsServer } from './ws/server.js';
 import { ConfigStore } from './config/ConfigStore.js';
 import { Supervisor } from './supervisor/Supervisor.js';
 import { EchoBrain, DeferredBrain, type Brain } from './brain/Brain.js';
-import { createClaudeBackend, probeClaude } from './claude/createClaudeBackend.js';
-import { createWorkerKingToolServer, untrusted, WORKERKING_TOOL_ALLOWLIST } from './claude/tools.js';
+import { createClaudeBackend, probeClaude, type ClaudeBackendOptions } from './claude/createClaudeBackend.js';
+import {
+  createWorkerKingToolServer,
+  untrusted,
+  WORKERKING_TOOL_ALLOWLIST,
+} from './claude/tools.js';
 import { createToolPolicy, summarizeToolCall } from './claude/toolPolicy.js';
 import { WsToolConfirmer } from './claude/WsToolConfirmer.js';
 import type { ToolPermissionMode } from '@workerking/shared';
@@ -25,6 +29,10 @@ import { ReminderStore } from './proactive/ReminderStore.js';
 import { ReminderScheduler } from './proactive/ReminderScheduler.js';
 import { ProactiveManager, composeWatches } from './proactive/ProactiveManager.js';
 import { WatchStore } from './proactive/WatchStore.js';
+import { EnvironmentContext } from './environment/EnvironmentContext.js';
+import { VaultContext } from './environment/VaultContext.js';
+import { SprintContext } from './sprint/SprintContext.js';
+import { SprintWatcher } from './sprint/SprintWatcher.js';
 import { detectHost } from './util/host.js';
 import { daemonEnvelopeContext, newToken } from './util/ids.js';
 import { installFileLog } from './util/fileLog.js';
@@ -115,6 +123,12 @@ export interface PersonaContext {
   conversations?: Pick<ConversationStore, 'currentSummary'>;
   /** The active project directory (claudeCwd), for orientation. */
   cwd?: string;
+  /** OS-level orientation: repo roots + live listings + resolution rules. */
+  environment?: Pick<EnvironmentContext, 'environmentBlock'>;
+  /** Global knowledge vault (context2) excerpts + usage rules. */
+  vault?: Pick<VaultContext, 'vaultBlock'>;
+  /** Compact sprint/standup summary from the local Sprint dashboard. */
+  sprint?: Pick<SprintContext, 'sprintBlock'>;
   /** Clock, injectable for tests. */
   now?: () => Date;
 }
@@ -139,6 +153,12 @@ function buildAmbientContext(ctx: PersonaContext): string {
         untrusted('conversation-summary', summary),
     );
   }
+  const env = ctx.environment?.environmentBlock();
+  if (env) lines.push(env);
+  const vault = ctx.vault?.vaultBlock();
+  if (vault) lines.push(vault);
+  const sprint = ctx.sprint?.sprintBlock();
+  if (sprint) lines.push(sprint);
   return lines.length ? `Ambient context:\n${lines.join('\n')}` : '';
 }
 
@@ -174,6 +194,30 @@ interface Disposable {
   stop: () => void | Promise<void>;
 }
 
+/**
+ * Build the MCP server map: always includes the in-process WorkerKing tools;
+ * optionally includes LocalTranscriber's stdio MCP server when enabled in config.
+ * Read once at brain-resolve time; restart required for changes to take effect.
+ */
+function buildMcpServers(
+  workerKingServer: ReturnType<typeof createWorkerKingToolServer>,
+  config: ConfigStore,
+) {
+  const servers: Record<string, unknown> = { workerking: workerKingServer };
+  if (config.get('localTranscriberEnabled') === true) {
+    const projectPath =
+      (config.get('localTranscriberPath') as string | undefined) ??
+      'C:/_repos/LocalTranscriber/src/LocalTranscriber.Mcp';
+    servers['local-transcriber'] = {
+      type: 'stdio',
+      command: 'dotnet',
+      args: ['run', '--project', projectPath, '--no-build'],
+      timeout: 60_000,
+    };
+  }
+  return servers as ClaudeBackendOptions['mcpServers'];
+}
+
 async function resolveBrain(
   deferred: DeferredBrain,
   config: ConfigStore,
@@ -182,6 +226,8 @@ async function resolveBrain(
   registerDisposable: (d: Disposable) => void,
   deps: DaemonDeps,
   proactiveHolder: { manager?: ProactiveManager } = {},
+  /** Shared with the Supervisor (folder resolution) — built in startDaemon. */
+  orientation?: { environment: EnvironmentContext; vault: VaultContext; sprint?: SprintContext },
 ): Promise<void> {
   const { memory, interactionLog, watchStore, reminderStore, conversations } = deps;
   const cwd = config.get('claudeCwd') as string | undefined;
@@ -211,6 +257,12 @@ async function resolveBrain(
   server.onClientConnected(() => {
     for (const payload of pendingNotices.splice(0)) server.broadcast('proactive.notify', payload);
   });
+
+  // Subscribe to Sprint's SSE stream for proactive diff alerts. Starts immediately
+  // and reconnects with backoff when Sprint is down — silent when not running.
+  const sprintWatcher = new SprintWatcher(proactiveNotify, log.child('sprint-watcher'));
+  sprintWatcher.start();
+  registerDisposable({ stop: () => sprintWatcher.stop() });
 
   const reminderScheduler = new ReminderScheduler({
     store: reminderStore,
@@ -266,11 +318,18 @@ async function resolveBrain(
     // Live working directory: point Claude at the current project without a
     // restart; ClaudeBackend resets the session when it changes (F1).
     cwdProvider: liveCwd,
-    // Live persona + ambient context (time, project, conversation summary),
-    // re-read on every message.
+    // Live persona + ambient context (time, project, environment, vault,
+    // conversation summary), re-read on every message.
     personaProvider: () =>
-      computePersonaAppend(config, { memory, conversations, cwd: liveCwd() }),
-    mcpServers: { workerking: toolServer },
+      computePersonaAppend(config, {
+        memory,
+        conversations,
+        cwd: liveCwd(),
+        environment: orientation?.environment,
+        vault: orientation?.vault,
+        sprint: orientation?.sprint,
+      }),
+    mcpServers: buildMcpServers(toolServer, config),
     allowedTools: WORKERKING_TOOL_ALLOWLIST,
     canUseTool,
   };
@@ -294,9 +353,7 @@ async function resolveBrain(
       }),
     });
     registerDisposable(cm);
-    cm.start().catch((e) =>
-      log.warn('capability manifest build failed', { error: String(e) }),
-    );
+    cm.start().catch((e) => log.warn('capability manifest build failed', { error: String(e) }));
 
     // Nightly memory consolidation (Letta sleep-time), when memory is enabled.
     if (config.get('memoryEnabled') !== false) {
@@ -328,13 +385,25 @@ async function resolveBrain(
     return;
   }
 
+  const probeStartedAt = daemonEnvelopeContext.now();
   const health = await probeClaude(cwd);
+  const probeMs = daemonEnvelopeContext.now() - probeStartedAt;
   if (health.ok) {
-    log.info('Claude Code ready — using ClaudeBackend');
+    // Plain ASCII, not an em dash: a Windows console/terminal not set to the
+    // UTF-8 codepage (the common default) renders "—" as garbled "ΓÇö" mojibake,
+    // corrupting exactly the log line meant to make daemon boot diagnosable.
+    log.info('Claude Code ready - using ClaudeBackend', { cwd, probeMs });
     deferred.set(createClaudeBackend(claudeOpts));
     startCapabilities();
   } else {
+    // Everything after this point runs on EchoBrain (`You said: ...`) until the
+    // daemon is restarted — a common cause of "the AI is answering wrong": it's
+    // not answering at all. cwd + probeMs are the two things that usually
+    // explain a probe failure (bad/unreachable working dir, or a login/network
+    // hiccup that took longer than the timeout).
     log.warn('Claude Code unavailable; falling back to EchoBrain', {
+      cwd,
+      probeMs,
       detail: health.detail ?? 'unknown',
       hint: 'Run `claude login` and restart for the real brain.',
     });
@@ -365,6 +434,22 @@ export async function startDaemon(opts: StartDaemonOptions = {}): Promise<Runnin
   // brain resolves in the background (bounded probe) and swaps itself in.
   const mode = opts.brainMode ?? 'auto';
   const disposables: Disposable[] = [];
+  // OS-level orientation (repo roots, folder resolution) + the global knowledge
+  // vault — shared by the brain's ambient context and the Supervisor's
+  // delegate_to_worker `folder` resolution. Caches fill lazily in the background
+  // on first use: an eager boot-time scan would touch every configured root
+  // (including possibly-dead \\wsl.localhost UNC paths) in tests and headless
+  // runs that never need it.
+  const environment = new EnvironmentContext(() => ({
+    repoRoots: config.get('repoRoots') as string[] | undefined,
+    envNotes: config.get('envNotes') as string | undefined,
+    claudeHost: config.get('claudeHost') as string | undefined,
+  }));
+  const vault = new VaultContext(() => config.get('vaultPath') as string | undefined, {
+    fence: untrusted,
+  });
+  // Compact sprint summary injected into Claude's persona — silent when Sprint is not running.
+  const sprint = new SprintContext();
   // Tracks the async brain resolution so stop() can wait for late-registered
   // disposables (capability manager / nightly job / proactive) to exist first.
   let brainReady: Promise<void> = Promise.resolve();
@@ -387,6 +472,7 @@ export async function startDaemon(opts: StartDaemonOptions = {}): Promise<Runnin
       (d) => disposables.push(d),
       deps,
       proactiveHolder,
+      { environment, vault, sprint },
     ).catch((err) => {
       // Never silent: without this log a boot-time failure (bad watch, memory
       // index init, …) is invisible; without the fallback every chat message
@@ -407,6 +493,7 @@ export async function startDaemon(opts: StartDaemonOptions = {}): Promise<Runnin
     },
     log,
     deps.taskStore,
+    environment,
   );
 
   const requestedPort =

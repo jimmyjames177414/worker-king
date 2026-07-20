@@ -1,0 +1,27 @@
+{
+  "name": "@workerking/wakeword-openwakeword",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "openWakeWord detector for the overlay renderer: streaming melspec → embedding → wake-model pipeline over onnxruntime-web.",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "onnxruntime-web": "^1.21.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.9"
+  }
+}

@@ -186,8 +186,7 @@ describe('core daemon (Phase 0)', () => {
     const envs = await c.collectUntil('task.done');
 
     const result = envs.find((e) => e.kind === 'voice.tool_result') as
-      | WsEnvelope<'voice.tool_result'>
-      | undefined;
+      WsEnvelope<'voice.tool_result'> | undefined;
     const payload = result?.payload.result as { status: string; task_id: string };
     expect(payload.status).toBe('started');
     expect(payload.task_id).toBeTruthy();
@@ -204,8 +203,7 @@ describe('core daemon (Phase 0)', () => {
     c.send('voice.tool_call', { name: 'nonsense', args: {} });
     const envs = await c.collectUntil('voice.tool_result');
     const result = envs.find((e) => e.kind === 'voice.tool_result') as
-      | WsEnvelope<'voice.tool_result'>
-      | undefined;
+      WsEnvelope<'voice.tool_result'> | undefined;
     expect(result?.payload.isError).toBe(true);
     c.close();
   });

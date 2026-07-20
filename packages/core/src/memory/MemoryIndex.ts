@@ -183,7 +183,10 @@ async function loadLocalEmbedder(): Promise<Embedder> {
   // Variable specifier so the optional package stays off the build/typecheck graph.
   const pkg = '@huggingface/transformers';
   const mod = (await import(/* @vite-ignore */ pkg)) as {
-    pipeline(task: string, model: string): Promise<(text: string, opts: unknown) => Promise<{ data: ArrayLike<number> }>>;
+    pipeline(
+      task: string,
+      model: string,
+    ): Promise<(text: string, opts: unknown) => Promise<{ data: ArrayLike<number> }>>;
   };
   const pipe = await mod.pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2');
   return {

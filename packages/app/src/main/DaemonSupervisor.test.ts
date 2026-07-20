@@ -50,7 +50,13 @@ function makeSupervisor(overrides: Record<string, unknown> = {}) {
     healthyUptimeMs: 5_000,
     ...overrides,
   });
-  return { sup, children, delays, tick: (ms: number) => (clock += ms), setClock: (v: number) => (clock = v) };
+  return {
+    sup,
+    children,
+    delays,
+    tick: (ms: number) => (clock += ms),
+    setClock: (v: number) => (clock = v),
+  };
 }
 
 describe('DaemonSupervisor crash handling', () => {

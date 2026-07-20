@@ -24,11 +24,12 @@ needs a Windows desktop with a mic. Each item is an independent commit on
 ## 4. On-demand memory recall for Claude (chosen architecture)
 
 **Current state:** `MemoryStore` (`packages/core/src/memory/MemoryStore.ts`) already has a `recall(query)`
-method (substring, line 94) and a `.md` mirror, but Claude has only the `remember` *write* tool
+method (substring, line 94) and a `.md` mirror, but Claude has only the `remember` _write_ tool
 (`packages/core/src/claude/tools.ts:124`). It can't query memory mid-conversation — it sees only the
 budget-capped persona summary injected at boot.
 
 **Plan:**
+
 - **Add a pluggable retrieval seam.** Introduce a small `MemoryIndex` interface (e.g.
   `search(query, opts): MemoryEntry[]`) in `packages/core/src/memory/`. Ship a `KeywordMemoryIndex`
   implementation that wraps/extends the existing `recall()` — add scope filtering and simple keyword
@@ -50,7 +51,7 @@ budget-capped persona summary injected at boot.
 
 ## 2. Fix the DaemonSupervisor infinite-restart loop
 
-**Bug:** `DaemonSupervisor` restarts the daemon on *every* exit with no backoff, no max-retry cap, no
+**Bug:** `DaemonSupervisor` restarts the daemon on _every_ exit with no backoff, no max-retry cap, no
 crash-loop detection (`packages/app/src/main/DaemonSupervisor.ts:106-110`, `main/index.ts:124-128`) —
 a daemon that crashes on startup hot-spawns processes forever. The comment says "attempt one restart";
 the code loops.
@@ -72,6 +73,7 @@ lint/format tooling anywhere — yet `/simplify` claims it "re-lints after"
 (`.claude/skills/simplify/SKILL.md:3`). A remote now exists (commits reference merged PRs).
 
 **Plan:**
+
 - `.github/workflows/ci.yml`: pnpm 10 + Node 20, `pnpm install --frozen-lockfile`, then
   `pnpm build → pnpm typecheck → pnpm test:headless` on push/PR. Cache pnpm store.
 - Add ESLint (typescript-eslint) + Prettier configs and a root `lint` script; add a lint step to CI.
@@ -91,6 +93,7 @@ nothing restores history on reopen; messages use `textContent` so code blocks re
 (`chat/main.ts:77,84`).
 
 **Plan:**
+
 - Subscribe to `task.created/progress/done/error` in `chat/main.ts`; render a live task-list panel in
   `chat/index.html`.
 - Render assistant messages as Markdown (code blocks, lists). Prefer a tiny, self-contained renderer
@@ -112,6 +115,7 @@ control in the settings panel (`renderer/chat/Settings.ts`) — can't switch to 
 (`overlay/WakeWord.ts:26-33`); the mic/framing pipeline is real.
 
 **Plan:**
+
 - Add a voice-provider dropdown (and, if straightforward, mic/output device pickers) to `Settings.ts`,
   writing the existing `voiceProvider` config key.
 - Replace `NullWakeWordDetector` with a real detector (openWakeWord or similar) behind the existing
@@ -171,7 +175,7 @@ value survives; corrupt file → defaults).
 
 ## 7. WS server heartbeat + dead-socket reaping (reliability — headless-testable)
 
-**Gap:** `ws/server.ts` answers `ping` (`:136`) but never *initiates* keepalive and has no
+**Gap:** `ws/server.ts` answers `ping` (`:136`) but never _initiates_ keepalive and has no
 `isAlive`/`terminate()` sweep. A half-open socket (WSL localhost drop after sleep — the exact case the
 client comments cite) leaves a stale entry in the `clients` map indefinitely.
 

@@ -131,7 +131,10 @@ export function createToolPolicy(opts: ToolPolicyOptions) {
           'Denied (fail-closed).',
       };
     }
-    const approved = await opts.confirmer.confirm({ tool: toolName, summary: summarize(toolName, input) });
+    const approved = await opts.confirmer.confirm({
+      tool: toolName,
+      summary: summarize(toolName, input),
+    });
     return approved
       ? { behavior: 'allow' }
       : { behavior: 'deny', message: `The user declined the "${toolName}" action.` };

@@ -23,22 +23,22 @@ Windows AI assistant · Electron desktop AI · Claude Code integration · GPT Re
 
 ## Features
 
-| Feature | Detail |
-|---|---|
-| **Floating avatar overlay** | Transparent, click-through overlay window with animated state machine (idle / listening / thinking / talking / alert). Lives in the corner of your desktop without stealing focus. |
-| **Voice I/O — GPT Realtime** | Full-duplex WebRTC voice powered by OpenAI GPT Realtime (gpt-realtime-mini or gpt-4o-realtime). Ephemeral keys minted by Electron main so your API key never touches the renderer. |
-| **Voice I/O — local cascade** | Offline-capable fallback pipeline: Whisper STT → Claude text brain → Kokoro TTS. No OpenAI required. |
-| **Claude Code brain** | Rides your existing Claude Pro/Max subscription via the TypeScript Agent SDK — no extra API spend. The voice model delegates real tasks and narrates progress as they stream in. |
-| **Capability discovery** | Detects your Claude skills, slash commands, agents, and MCP servers and builds a live capability manifest, refreshed as you add more. |
-| **Push-to-talk hotkey** | Global shortcut (default `Ctrl+Shift+Space`) toggles the voice session from anywhere on Windows. Configurable from settings. |
-| **Explain selection hotkey** | Select text in any app, press `Ctrl+Shift+E`, and WorkerKing explains it in a toast + speaks the answer. |
-| **Wake-word support** | Opt-in wake-word detection ("Hey WorkerKing") so you never need to use the hotkey. |
-| **Expandable chat window** | Full transcript, task list, and settings panel accessible from the system tray. |
-| **Live captions** | Real-time speech-to-text captions bubble above the avatar as you speak and as the assistant replies. |
-| **Encrypted secrets** | API keys stored via Electron `safeStorage` (Windows DPAPI). Never written to disk in plaintext. |
-| **Character cards** | SillyTavern-compatible character card import for custom personas. |
-| **Proactive notices** | Reminders, watch heads-ups, and `notify` tool calls surface as Windows toast notifications and spoken announcements. |
-| **WSL + Windows hybrid** | The daemon runs wherever Claude Code lives — native Windows or WSL2. The UI always connects over `localhost`. |
+| Feature                       | Detail                                                                                                                                                                             |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Floating avatar overlay**   | Transparent, click-through overlay window with animated state machine (idle / listening / thinking / talking / alert). Lives in the corner of your desktop without stealing focus. |
+| **Voice I/O — GPT Realtime**  | Full-duplex WebRTC voice powered by OpenAI GPT Realtime (gpt-realtime-mini or gpt-4o-realtime). Ephemeral keys minted by Electron main so your API key never touches the renderer. |
+| **Voice I/O — local cascade** | Offline-capable fallback pipeline: Whisper STT → Claude text brain → Kokoro TTS. No OpenAI required.                                                                               |
+| **Claude Code brain**         | Rides your existing Claude Pro/Max subscription via the TypeScript Agent SDK — no extra API spend. The voice model delegates real tasks and narrates progress as they stream in.   |
+| **Capability discovery**      | Detects your Claude skills, slash commands, agents, and MCP servers and builds a live capability manifest, refreshed as you add more.                                              |
+| **Push-to-talk hotkey**       | Global shortcut (default `Ctrl+Shift+Space`) toggles the voice session from anywhere on Windows. Configurable from settings.                                                       |
+| **Explain selection hotkey**  | Select text in any app, press `Ctrl+Shift+E`, and WorkerKing explains it in a toast + speaks the answer.                                                                           |
+| **Wake-word support**         | Opt-in wake-word detection ("Hey WorkerKing") so you never need to use the hotkey.                                                                                                 |
+| **Expandable chat window**    | Full transcript, task list, and settings panel accessible from the system tray.                                                                                                    |
+| **Live captions**             | Real-time speech-to-text captions bubble above the avatar as you speak and as the assistant replies.                                                                               |
+| **Encrypted secrets**         | API keys stored via Electron `safeStorage` (Windows DPAPI). Never written to disk in plaintext.                                                                                    |
+| **Character cards**           | SillyTavern-compatible character card import for custom personas.                                                                                                                  |
+| **Proactive notices**         | Reminders, watch heads-ups, and `notify` tool calls surface as Windows toast notifications and spoken announcements.                                                               |
+| **WSL + Windows hybrid**      | The daemon runs wherever Claude Code lives — native Windows or WSL2. The UI always connects over `localhost`.                                                                      |
 
 ---
 
@@ -65,12 +65,12 @@ WorkerKing separates concerns cleanly across three OS processes that communicate
 └───────────────────────┘
 ```
 
-| Process | Runtime | Responsibility |
-|---|---|---|
-| Electron **main** | Node (Electron) | Windows, tray, global hotkeys, DPAPI secrets, daemon lifecycle, screen capture |
-| Renderer: **overlay** | Chromium | Animated avatar state machine, mic/WebRTC voice session, captions, wake-word |
-| Renderer: **chat** | Chromium | Text chat, task list, transcript, settings UI |
-| Core **daemon** | Plain Node (zero Electron imports) | Claude Agent SDK, WS server, task supervisor, capability manifest, config, memory |
+| Process               | Runtime                            | Responsibility                                                                    |
+| --------------------- | ---------------------------------- | --------------------------------------------------------------------------------- |
+| Electron **main**     | Node (Electron)                    | Windows, tray, global hotkeys, DPAPI secrets, daemon lifecycle, screen capture    |
+| Renderer: **overlay** | Chromium                           | Animated avatar state machine, mic/WebRTC voice session, captions, wake-word      |
+| Renderer: **chat**    | Chromium                           | Text chat, task list, transcript, settings UI                                     |
+| Core **daemon**       | Plain Node (zero Electron imports) | Claude Agent SDK, WS server, task supervisor, capability manifest, config, memory |
 
 The daemon is fully headless and can run on any OS — only the Electron shell needs a Windows desktop.
 
@@ -159,20 +159,20 @@ scripts/stop-logs.ps1
 
 WorkerKing is configured via `electron-store` (persisted to `%APPDATA%/workerking/config.json`). Secrets (API keys) are stored separately via Windows DPAPI (`safeStorage`).
 
-| Key | Default | Description |
-|---|---|---|
-| `assistantName` | `WorkerKing` | Companion name used in prompts and notifications |
-| `personality` | _(see source)_ | Personality injected into the system prompt |
-| `voiceProvider` | `gpt-realtime` | `gpt-realtime` or `local-cascade` |
-| `openaiModel` | `gpt-realtime-mini` | OpenAI Realtime model to use |
-| `hotkey` | `Control+Shift+Space` | Global push-to-talk shortcut |
-| `explainHotkey` | `Control+Shift+E` | Explain-selection shortcut |
-| `claudeHost` | `auto` | Where Claude Code lives: `auto`, `windows`, or `wsl` |
-| `wakeWordEnabled` | `false` | Enable always-listening wake-word detection |
-| `screenAwareness` | `false` | Allow the daemon to capture screenshots for context |
-| `memoryEnabled` | `true` | Persist conversation memory across sessions |
-| `remindersEnabled` | `true` | Allow the assistant to set and fire reminders |
-| `proactiveEnabled` | `false` | Allow unprompted proactive check-ins |
+| Key                | Default               | Description                                          |
+| ------------------ | --------------------- | ---------------------------------------------------- |
+| `assistantName`    | `WorkerKing`          | Companion name used in prompts and notifications     |
+| `personality`      | _(see source)_        | Personality injected into the system prompt          |
+| `voiceProvider`    | `gpt-realtime`        | `gpt-realtime` or `local-cascade`                    |
+| `openaiModel`      | `gpt-realtime-mini`   | OpenAI Realtime model to use                         |
+| `hotkey`           | `Control+Shift+Space` | Global push-to-talk shortcut                         |
+| `explainHotkey`    | `Control+Shift+E`     | Explain-selection shortcut                           |
+| `claudeHost`       | `auto`                | Where Claude Code lives: `auto`, `windows`, or `wsl` |
+| `wakeWordEnabled`  | `false`               | Enable always-listening wake-word detection          |
+| `screenAwareness`  | `false`               | Allow the daemon to capture screenshots for context  |
+| `memoryEnabled`    | `true`                | Persist conversation memory across sessions          |
+| `remindersEnabled` | `true`                | Allow the assistant to set and fire reminders        |
+| `proactiveEnabled` | `false`               | Allow unprompted proactive check-ins                 |
 
 ---
 
@@ -181,9 +181,11 @@ WorkerKing is configured via `electron-store` (persisted to `%APPDATA%/workerkin
 WorkerKing ships with two swappable voice backends behind a clean `VoiceProvider` interface:
 
 ### GPT Realtime (default)
+
 Full-duplex WebRTC voice via OpenAI's Realtime API. Ultra-low latency, natural conversation flow. Requires an OpenAI API key (stored encrypted via DPAPI; never touches the renderer process).
 
 ### Local Cascade (offline-capable)
+
 `Whisper STT → Claude text brain → Kokoro TTS`. Runs entirely on your machine — no cloud voice API needed. Useful for air-gapped environments or when you want full privacy.
 
 Adding a new provider means implementing the `VoiceProvider` interface in `packages/voice-providers/` — that's it.
@@ -192,18 +194,18 @@ Adding a new provider means implementing the `VoiceProvider` interface in `packa
 
 ## Technology Stack
 
-| Layer | Technology |
-|---|---|
-| Desktop shell | [Electron](https://www.electronjs.org) |
-| Build tooling | [electron-vite](https://electron-vite.org), [Vite](https://vitejs.dev) |
-| Language | TypeScript (strict, Node ≥ 20) |
-| Package manager | [pnpm](https://pnpm.io) 10 (workspace monorepo) |
-| AI brain | [Claude Code](https://claude.ai/code) via [@anthropic-ai/agent-sdk](https://www.npmjs.com/package/@anthropic-ai/agent-sdk) |
-| Voice (cloud) | [OpenAI Realtime API](https://platform.openai.com/docs/guides/realtime) (`@openai/agents-realtime`) |
-| WS protocol | [ws](https://github.com/websockets/ws) + [Zod](https://zod.dev) schemas |
-| Secrets | Electron `safeStorage` (Windows DPAPI) |
-| Config persistence | [electron-store](https://github.com/sindresorhus/electron-store) |
-| Tests | [Vitest](https://vitest.dev) |
+| Layer              | Technology                                                                                                                 |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------- |
+| Desktop shell      | [Electron](https://www.electronjs.org)                                                                                     |
+| Build tooling      | [electron-vite](https://electron-vite.org), [Vite](https://vitejs.dev)                                                     |
+| Language           | TypeScript (strict, Node ≥ 20)                                                                                             |
+| Package manager    | [pnpm](https://pnpm.io) 10 (workspace monorepo)                                                                            |
+| AI brain           | [Claude Code](https://claude.ai/code) via [@anthropic-ai/agent-sdk](https://www.npmjs.com/package/@anthropic-ai/agent-sdk) |
+| Voice (cloud)      | [OpenAI Realtime API](https://platform.openai.com/docs/guides/realtime) (`@openai/agents-realtime`)                        |
+| WS protocol        | [ws](https://github.com/websockets/ws) + [Zod](https://zod.dev) schemas                                                    |
+| Secrets            | Electron `safeStorage` (Windows DPAPI)                                                                                     |
+| Config persistence | [electron-store](https://github.com/sindresorhus/electron-store)                                                           |
+| Tests              | [Vitest](https://vitest.dev)                                                                                               |
 
 ---
 
@@ -231,6 +233,7 @@ Pull requests are welcome. Please keep the daemon (`core`) free of Electron impo
 Created and maintained by **[jimmyjames177414](https://github.com/jimmyjames177414)** — contact: [jimmyjames177414@gmail.com](mailto:jimmyjames177414@gmail.com)
 
 Built on the shoulders of:
+
 - [Anthropic Claude](https://www.anthropic.com) — the AI brain
 - [OpenAI Realtime API](https://platform.openai.com/docs/guides/realtime) — the voice layer
 - [Electron](https://www.electronjs.org) — the desktop shell

@@ -3,7 +3,11 @@ import { createLogger } from './logger.js';
 
 function capture(opts: Parameters<typeof createLogger>[0] = {}) {
   const lines: string[] = [];
-  const log = createLogger({ now: () => new Date('2026-07-15T00:00:00.000Z'), sink: (l) => lines.push(l), ...opts });
+  const log = createLogger({
+    now: () => new Date('2026-07-15T00:00:00.000Z'),
+    sink: (l) => lines.push(l),
+    ...opts,
+  });
   return { log, lines };
 }
 

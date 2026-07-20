@@ -2,6 +2,7 @@ import { spawn, type ChildProcess, type SpawnOptions } from 'node:child_process'
 import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { EventEmitter } from 'node:events';
+import { dirname, resolve } from 'node:path';
 
 const require = createRequire(import.meta.url);
 
@@ -34,6 +35,12 @@ export interface DaemonSupervisorOptions {
   delayFn?: (ms: number) => Promise<void>;
   /** Injectable spawn (tests). */
   spawnFn?: SpawnFn;
+  /**
+   * Path the daemon should write its handshake JSON to. External processes
+   * (e.g. Sprint's notify.js) read this file to learn the per-boot port + token.
+   * Defaults to `.workerking-handshake.json` in the repo root (dev builds).
+   */
+  handshakeFile?: string;
 }
 
 /**
@@ -90,10 +97,18 @@ export class DaemonSupervisor extends EventEmitter {
     const token = randomUUID().replace(/-/g, '');
     const coreMain = require.resolve('@workerking/core');
 
+    // Derive handshake file path: explicit option > env override > repo-root default.
+    // External processes (Sprint notify.js) read this file to learn the port + token.
+    const handshakeFile =
+      this.opts.handshakeFile ??
+      process.env['WORKERKING_HANDSHAKE_FILE'] ??
+      resolve(dirname(coreMain), '../../../.workerking-handshake.json');
+
     const env: NodeJS.ProcessEnv = {
       ...process.env,
       WORKERKING_TOKEN: token,
       WORKERKING_PORT: '0',
+      WORKERKING_HANDSHAKE_FILE: handshakeFile,
     };
 
     let command: string;
@@ -101,12 +116,7 @@ export class DaemonSupervisor extends EventEmitter {
     if (this.opts.mode === 'wsl') {
       const linuxPath = toWslPath(coreMain);
       command = 'wsl.exe';
-      args = [
-        ...(this.opts.wslDistro ? ['-d', this.opts.wslDistro] : []),
-        '-e',
-        'node',
-        linuxPath,
-      ];
+      args = [...(this.opts.wslDistro ? ['-d', this.opts.wslDistro] : []), '-e', 'node', linuxPath];
     } else {
       command = process.execPath; // Electron's bundled node in the main process
       args = [coreMain];

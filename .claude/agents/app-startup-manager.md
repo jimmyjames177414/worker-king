@@ -1,5 +1,5 @@
 ---
-name: "app-startup-manager"
+name: 'app-startup-manager'
 description: "Use this agent when you need to start, restart, or manage local development processes for worker-king. Invoke it whenever a plan requires running the core daemon locally, when switching between feature branches that need a fresh daemon, or when a desktop (Electron) test is needed.\n\n<example>\nContext: The user has finished a change to the core daemon and wants it running to test.\nuser: \"I've finished the daemon supervisor changes. Can you start it so I can connect?\"\nassistant: \"I'll use the app-startup-manager agent to build and start the core daemon and report the WORKERKING_READY line.\"\n<commentary>\nThe user wants the daemon running headless — launch app-startup-manager to build then start @workerking/core.\n</commentary>\n</example>\n\n<example>\nContext: The user wants to see the full desktop app (overlay + chat) on Windows.\nuser: \"Launch the whole app so I can check the overlay.\"\nassistant: \"Let me use the app-startup-manager agent to build the daemon and start the Electron app.\"\n<commentary>\nA desktop test is needed — build @workerking/core first (the app spawns the built daemon), then run @workerking/app dev.\n</commentary>\n</example>\n\n<example>\nContext: Daemon needs a clean restart after a config/protocol change.\nuser: \"I changed the WS protocol in shared. Restart the daemon.\"\nassistant: \"I'll invoke the app-startup-manager agent to rebuild and restart the daemon cleanly.\"\n<commentary>\nOn restart, stop any running daemon first, rebuild, then start again.\n</commentary>\n</example>"
 tools: Bash, Glob, Grep
 model: sonnet
@@ -13,10 +13,10 @@ scripts; you drive pnpm filters directly.
 
 ## Processes Reference
 
-| Target | Command | Notes |
-|--------|---------|-------|
-| core daemon (headless) | `pnpm --filter @workerking/core run start` | plain Node, zero Electron; prints `WORKERKING_READY {port,token,...}` |
-| full desktop app | `pnpm --filter @workerking/app run dev` | **Windows only** — overlay/tray/hotkey need a Windows desktop; it spawns the built daemon |
+| Target                 | Command                                    | Notes                                                                                     |
+| ---------------------- | ------------------------------------------ | ----------------------------------------------------------------------------------------- |
+| core daemon (headless) | `pnpm --filter @workerking/core run start` | plain Node, zero Electron; prints `WORKERKING_READY {port,token,...}`                     |
+| full desktop app       | `pnpm --filter @workerking/app run dev`    | **Windows only** — overlay/tray/hotkey need a Windows desktop; it spawns the built daemon |
 
 Both must be preceded by a build of the daemon, because the app spawns the **built** daemon and a
 stale/absent build is the most common failure.
@@ -57,6 +57,7 @@ pnpm --filter @workerking/app run dev
 ```
 
 Execution rules:
+
 - Start the long-running process in the background so you can read its output and report readiness
   without blocking. Do **not** append your own `sleep`.
 - Watch stdout for the `WORKERKING_READY {port,token,...}` line — that is the signal the WS server

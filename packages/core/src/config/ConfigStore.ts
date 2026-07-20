@@ -1,4 +1,4 @@
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -34,6 +34,17 @@ export interface ConfigStoreOptions {
   persist?: boolean;
   /** Directory for the config file. Defaults to ~/.claude/workerking. */
   dir?: string;
+}
+
+/** `claudeCwd` may be cleared (undefined/empty); otherwise it must be a real directory. */
+function isValidClaudeCwd(value: unknown): boolean {
+  if (value === undefined || value === '') return true;
+  if (typeof value !== 'string') return false;
+  try {
+    return existsSync(value) && statSync(value).isDirectory();
+  } catch {
+    return false;
+  }
 }
 
 export class ConfigStore {
@@ -84,6 +95,10 @@ export class ConfigStore {
     // used to wipe the whole file back to defaults on the next boot).
     const checked = validateConfigValue(key, value);
     if (!checked.ok) return;
+    // claudeCwd feeds the SDK subprocess `cwd` directly — an empty/nonexistent
+    // directory would make every Claude message fail with a spawn error, so
+    // reject it here rather than letting a typo brick the daemon on the next turn.
+    if (key === 'claudeCwd' && !isValidClaudeCwd(checked.value)) return;
     this.data[key] = checked.value;
     this.persist();
     for (const l of this.listeners) l(key, checked.value);

@@ -49,7 +49,9 @@ describe('consolidate', () => {
     log.append('chat', 'I switched to Cursor');
 
     // Distiller keeps editor (updated) + drops the transient one.
-    const distill: Distiller = async () => [{ key: 'editor', value: 'Cursor', scope: 'preference' }];
+    const distill: Distiller = async () => [
+      { key: 'editor', value: 'Cursor', scope: 'preference' },
+    ];
     const res = await consolidate({ memory, log, distill, now });
 
     expect(res.kept).toBe(1);
@@ -74,7 +76,12 @@ describe('consolidate', () => {
 
     // Memories must be untouched — never stale-swept to nothing.
     expect(res).toEqual({ kept: 2, staled: 0 });
-    expect(memory.recall().map((e) => e.key).sort()).toEqual(['editor', 'timezone']);
+    expect(
+      memory
+        .recall()
+        .map((e) => e.key)
+        .sort(),
+    ).toEqual(['editor', 'timezone']);
     expect(memory.summary()).toContain('Cursor');
   });
 

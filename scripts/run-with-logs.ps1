@@ -14,6 +14,12 @@
   daemon = the core daemon standalone (plain Node).
   app    = the full Electron app (electron-vite dev), which spawns the built daemon.
 
+.PARAMETER ExtraArgs
+  Extra CLI arguments forwarded to the target, as an array (e.g. -ExtraArgs '--foo','bar').
+  Each element is passed through as a literal argument — none of them may contain
+  cmd.exe shell metacharacters (&|<>^), since they're interpolated into a `cmd /c`
+  command line for output redirection.
+
 .EXAMPLE
   scripts/run-with-logs.ps1 -Target daemon
   scripts/run-with-logs.ps1 -Target app
@@ -22,16 +28,37 @@
 param(
   [ValidateSet('daemon', 'app')]
   [string]$Target = 'daemon',
-  [string]$ExtraArgs = '',
+  [string[]]$ExtraArgs = @(),
   [switch]$NoBuild
 )
 
 $ErrorActionPreference = 'Stop'
 Set-Location (Join-Path $PSScriptRoot '..')
 
+# Reject shell metacharacters in each arg — they'd otherwise be interpreted by
+# the `cmd /c` wrapper below (arg injection), not passed through literally.
+foreach ($a in $ExtraArgs) {
+  if ($a -match '[&|<>^]') {
+    throw "ExtraArgs element '$a' contains a shell metacharacter (&|<>^), which is not allowed."
+  }
+}
+
 $logDir = 'tail-logs'
 New-Item -ItemType Directory -Force -Path $logDir | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $logDir 'app-logs') | Out-Null
+
+# If a previous run for this target is still tracked, stop it first — otherwise
+# its PID file would be overwritten here, orphaning that earlier process tree.
+$existingPidFile = Join-Path $logDir "$Target.pid"
+if (Test-Path $existingPidFile) {
+  $existingProcId = (Get-Content -LiteralPath $existingPidFile | Select-Object -First 1)
+  if ($existingProcId) { $existingProcId = $existingProcId.Trim() }
+  if ($existingProcId -and (Get-Process -Id $existingProcId -ErrorAction SilentlyContinue)) {
+    Write-Host "A '$Target' runner (pid $existingProcId) is already tracked; stopping it first..."
+    taskkill /PID $existingProcId /T /F 2>$null | Out-Null
+  }
+  Remove-Item -LiteralPath $existingPidFile -ErrorAction SilentlyContinue
+}
 
 # Daemon tees its own stdout/stderr here (F5-visible too). Absolute path so a
 # daemon spawned by the Electron app from any cwd still writes into this repo.
@@ -47,12 +74,16 @@ if (-not $NoBuild) {
 $log = Join-Path $logDir "$Target.log"
 Remove-Item $log -ErrorAction SilentlyContinue
 
+# Each extra arg is individually double-quoted so it lands as one cmd.exe token
+# rather than being re-split or reinterpreted.
+$quotedExtraArgs = ($ExtraArgs | ForEach-Object { '"' + $_ + '"' }) -join ' '
+
 switch ($Target) {
   'daemon' {
-    $inner = "node `"packages/core/dist/main.js`" $ExtraArgs > `"$log`" 2>&1"
+    $inner = "node `"packages/core/dist/main.js`" $quotedExtraArgs > `"$log`" 2>&1"
   }
   'app' {
-    $inner = "pnpm --filter `"@workerking/app`" run dev $ExtraArgs > `"$log`" 2>&1"
+    $inner = "pnpm --filter `"@workerking/app`" run dev $quotedExtraArgs > `"$log`" 2>&1"
   }
 }
 

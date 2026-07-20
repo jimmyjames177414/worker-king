@@ -19,7 +19,9 @@ describe('mintEphemeralKey', () => {
     const [url, init] = fetchFn.mock.calls[0];
     expect(url).toContain('/v1/realtime/client_secrets');
     expect(init.headers.Authorization).toBe('Bearer sk-real');
-    expect(JSON.parse(init.body)).toEqual({ session: { type: 'realtime', model: 'gpt-realtime-mini' } });
+    expect(JSON.parse(init.body)).toEqual({
+      session: { type: 'realtime', model: 'gpt-realtime-mini' },
+    });
   });
 
   it('accepts the legacy client_secret.value shape', async () => {
@@ -33,7 +35,12 @@ describe('mintEphemeralKey', () => {
 
   it('throws on a non-ok response with status + body', async () => {
     const fetchFn = vi.fn<FetchLike>(() =>
-      Promise.resolve({ ok: false, status: 401, text: async () => 'bad key', json: async () => ({}) }),
+      Promise.resolve({
+        ok: false,
+        status: 401,
+        text: async () => 'bad key',
+        json: async () => ({}),
+      }),
     );
     await expect(mintEphemeralKey('sk', 'm', fetchFn)).rejects.toThrow(/401 bad key/);
   });

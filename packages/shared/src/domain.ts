@@ -63,13 +63,7 @@ export type Task = z.infer<typeof taskSchema>;
 // Capability manifest — how WorkerKing "knows all it can do".
 // ---------------------------------------------------------------------------
 
-export const capabilityKindSchema = z.enum([
-  'skill',
-  'command',
-  'agent',
-  'mcp_tool',
-  'mcp_server',
-]);
+export const capabilityKindSchema = z.enum(['skill', 'command', 'agent', 'mcp_tool', 'mcp_server']);
 export type CapabilityKind = z.infer<typeof capabilityKindSchema>;
 
 export const capabilityManifestEntrySchema = z.object({
@@ -169,13 +163,7 @@ export type AssembledPersona = z.infer<typeof assembledPersonaSchema>;
 // Avatar state — the companion's animation state machine.
 // ---------------------------------------------------------------------------
 
-export const avatarStateSchema = z.enum([
-  'idle',
-  'listening',
-  'thinking',
-  'talking',
-  'alert',
-]);
+export const avatarStateSchema = z.enum(['idle', 'listening', 'thinking', 'talking', 'alert']);
 export type AvatarState = z.infer<typeof avatarStateSchema>;
 
 // ---------------------------------------------------------------------------
@@ -271,6 +259,30 @@ export const workerKingConfigSchema = z
     userName: z.string().optional(),
     /** Active SillyTavern chara_card_v2 (object), if the user imported one. */
     characterCard: z.unknown().optional(),
+    /**
+     * Directories whose subfolders are the user's repos/projects (Windows paths
+     * and \\wsl.localhost UNC paths both work). The brain gets these — plus a
+     * live listing — as environment context, so "open X" / "work in Y" resolve.
+     */
+    repoRoots: z.array(z.string()).optional(),
+    /** Free-text environment notes folded into the brain's ambient context. */
+    envNotes: z.string().optional(),
+    /**
+     * Global knowledge vault (a claude-obsidian/context2-style wiki). The brain
+     * is pointed at it (hot cache + index excerpts) for recall and filing.
+     */
+    vaultPath: z.string().optional(),
+    /**
+     * Register the LocalTranscriber MCP server so Claude can call tail_transcript,
+     * read_current_transcript, start/stop_transcription, etc. Requires LocalTranscriber
+     * to be built (`dotnet build`) and `dotnet` on PATH. Off by default.
+     */
+    localTranscriberEnabled: z.boolean().optional(),
+    /**
+     * Path to the LocalTranscriber.Mcp project (used with `dotnet run --project`).
+     * Defaults to C:/_repos/LocalTranscriber/src/LocalTranscriber.Mcp.
+     */
+    localTranscriberPath: z.string().optional(),
   })
   // Unknown keys are preserved (the store historically allowed arbitrary keys).
   .passthrough();
@@ -303,6 +315,9 @@ export const DEFAULT_CONFIG: WorkerKingConfig = {
   proactiveEnabled: false,
   explainHotkey: 'Control+Shift+E',
   toolPermissionMode: 'gated',
+  repoRoots: ['C:\\_repos', '\\\\wsl.localhost\\Ubuntu-22.04\\home\\jamesamiller\\repos'],
+  localTranscriberEnabled: false,
+  localTranscriberPath: 'C:/_repos/LocalTranscriber/src/LocalTranscriber.Mcp',
 };
 
 /**

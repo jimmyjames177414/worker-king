@@ -70,7 +70,8 @@ export class ProactiveManager {
   constructor(private readonly deps: ProactiveManagerDeps) {
     this.watches = deps.watches;
     this.makeCron =
-      deps.makeCron ?? ((expr, cb) => new Cron(expr, () => cb()) as unknown as { stop: () => void });
+      deps.makeCron ??
+      ((expr, cb) => new Cron(expr, () => cb()) as unknown as { stop: () => void });
   }
 
   start(): void {

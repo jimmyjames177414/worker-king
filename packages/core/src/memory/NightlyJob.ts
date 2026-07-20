@@ -36,10 +36,14 @@ export interface ConsolidateDeps {
 }
 
 /** Run one consolidation pass. Safe to call on demand or from the schedule. */
-export async function consolidate(deps: ConsolidateDeps): Promise<{ kept: number; staled: number }> {
+export async function consolidate(
+  deps: ConsolidateDeps,
+): Promise<{ kept: number; staled: number }> {
   const now = deps.now ?? (() => Date.now());
   const liveBefore = deps.memory.recall();
-  const interactions = deps.log.readRecent(deps.maxInteractions ?? 200).map((e) => `[${e.kind}] ${e.text}`);
+  const interactions = deps.log
+    .readRecent(deps.maxInteractions ?? 200)
+    .map((e) => `[${e.kind}] ${e.text}`);
 
   // Nothing to work from → no-op.
   if (!liveBefore.length && !interactions.length) return { kept: 0, staled: 0 };
@@ -77,12 +81,10 @@ export async function consolidate(deps: ConsolidateDeps): Promise<{ kept: number
  * `respond` is the ClaudeBackend-style text responder (injected to avoid coupling
  * to the SDK here).
  */
-export function createClaudeDistiller(
-  respond: (prompt: string) => Promise<string>,
-): Distiller {
+export function createClaudeDistiller(respond: (prompt: string) => Promise<string>): Distiller {
   return async ({ memories, interactions }) => {
     const prompt = [
-      'You are consolidating an assistant\'s long-term memory. Given the CURRENT MEMORIES and',
+      "You are consolidating an assistant's long-term memory. Given the CURRENT MEMORIES and",
       'RECENT INTERACTIONS, output the durable set of facts/preferences worth keeping.',
       'Rules: merge duplicates, update outdated values (keep the newest), drop anything',
       'transient or no longer true, use short stable keys. Output ONLY a JSON array of',
@@ -113,7 +115,9 @@ export function parseDistilled(text: string): DistilledMemory[] {
       .map((x) => ({
         key: x.key,
         value: x.value,
-        scope: (['preference', 'fact', 'project'].includes(x.scope) ? x.scope : 'fact') as MemoryScope,
+        scope: (['preference', 'fact', 'project'].includes(x.scope)
+          ? x.scope
+          : 'fact') as MemoryScope,
       }));
   } catch {
     return [];

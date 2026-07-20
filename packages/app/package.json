@@ -16,6 +16,7 @@
     "@workerking/core": "workspace:*",
     "@workerking/shared": "workspace:*",
     "@workerking/voice-providers": "workspace:*",
+    "@workerking/wakeword-openwakeword": "workspace:*",
     "electron-store": "^10.0.0",
     "ws": "^8.18.0",
     "zod": "^3.24.1"

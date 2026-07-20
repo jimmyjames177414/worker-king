@@ -2,9 +2,10 @@ import { connectToDaemon } from '../shared/wsClient.js';
 import { AvatarController } from './AvatarController.js';
 import { Captions } from './Captions.js';
 import { VoiceHost } from './VoiceHost.js';
-import { WakeWordController, createWakeWordDetector } from './WakeWord.js';
+import { WakeWordController, createWakeWordDetector, shouldWakeListen } from './WakeWord.js';
 import { applyOutputDeviceToDom } from '../shared/audioDevices.js';
 import { applyTheme, normalizeThemePref } from '../shared/theme.js';
+import { describeError } from '../shared/describeError.js';
 
 /**
  * Overlay renderer entry. Wires:
@@ -12,16 +13,18 @@ import { applyTheme, normalizeThemePref } from '../shared/theme.js';
  *  - left-click on the avatar to toggle the voice session
  *  - right-click on the avatar to open the chat window
  */
-const bridge = (window as unknown as {
-  workerking: {
-    setClickThrough(on: boolean): void;
-    openChat(): void;
-    mintRealtimeKey(): Promise<string>;
-    onPushToTalk(cb: () => void): void;
-    onReconnect(cb: () => void): void;
-    onSpeak(cb: (text: string) => void): void;
-  };
-}).workerking;
+const bridge = (
+  window as unknown as {
+    workerking: {
+      setClickThrough(on: boolean): void;
+      openChat(): void;
+      mintRealtimeKey(): Promise<string>;
+      onPushToTalk(cb: () => void): void;
+      onReconnect(cb: () => void): void;
+      onSpeak(cb: (text: string) => void): void;
+    };
+  }
+).workerking;
 
 async function main(): Promise<VoiceHost | undefined> {
   const avatarEl = document.getElementById('avatar');
@@ -30,7 +33,6 @@ async function main(): Promise<VoiceHost | undefined> {
 
   const captionsEl = document.getElementById('captions');
   const captions = captionsEl ? new Captions(captionsEl) : undefined;
-
 
   let client;
   try {
@@ -89,8 +91,9 @@ async function main(): Promise<VoiceHost | undefined> {
       'yourself, but for ANYTHING substantive — running commands, editing files, answering questions that',
       'need tools — first say a short filler like "On it" or "Let me take care of that", then call',
       'delegate_to_worker with the task. Progress and results will be spoken to the user automatically as',
-      'they arrive; read them out naturally. Use check_task_status if the user asks how it\'s going, and',
-      'cancel_task if they want to stop.',
+      "they arrive; read them out naturally. Use check_task_status ONLY when the user asks how it's going —",
+      'never poll it on your own or narrate repeated status checks. While a task runs, stay quiet unless',
+      'the user speaks or an update arrives. Use cancel_task if they want to stop.',
     ].join(' ');
     return capabilitySummary ? `${base}\n\n${capabilitySummary}` : base;
   });
@@ -105,21 +108,46 @@ async function main(): Promise<VoiceHost | undefined> {
     bridge.openChat();
   });
 
-  // Wake word (2.3, opt-in): when enabled in config, "Hey <name>" triggers the
-  // same session start as the hotkey. The detector comes from the factory — a
-  // real openWakeWord model if installed, else a safe no-op (see WakeWord.ts).
-  const wake = new WakeWordController(await createWakeWordDetector(), () => void voiceHost.toggle());
-  const applyWakeConfig = (enabled: unknown) => {
-    if (enabled === true) void wake.enable(inputDeviceId).catch((e) => console.error('[wake] enable failed', e));
-    else wake.disable();
+  // Wake word (2.3, opt-in): when enabled in config, "Hey <name>" starts a
+  // session (start-only — a detection can never stop a live session). The
+  // controller is suspended while a voice session is active so there's exactly
+  // one open mic and the detector never hears the assistant's own TTS.
+  const wake = new WakeWordController(
+    await createWakeWordDetector(),
+    () => void voiceHost.startIfIdle(),
+  );
+  let wakeWordEnabled = false;
+  let voiceState = 'idle';
+  const syncWake = () => {
+    const listen = shouldWakeListen(wakeWordEnabled, voiceState);
+    if (listen && !wake.isEnabled()) {
+      console.debug(
+        `[wake] syncWake: enabling (wakeWordEnabled=${wakeWordEnabled}, voiceState=${voiceState})`,
+      );
+      void wake
+        .enable(inputDeviceId)
+        .catch((e) => console.error('[wake] enable failed', describeError(e)));
+    } else if (!listen && wake.isEnabled()) {
+      console.debug(
+        `[wake] syncWake: disabling (wakeWordEnabled=${wakeWordEnabled}, voiceState=${voiceState})`,
+      );
+      wake.disable();
+    }
   };
+  client.on('voice.state', (env) => {
+    voiceState = env.payload.state;
+    syncWake();
+  });
   client.on('config.changed', (env) => {
-    if (env.payload.key === 'wakeWordEnabled') applyWakeConfig(env.payload.value);
+    if (env.payload.key === 'wakeWordEnabled') {
+      wakeWordEnabled = env.payload.value === true;
+      syncWake();
+    }
     if (env.payload.key === 'inputDeviceId') {
       inputDeviceId = asStr(env.payload.value);
       if (wake.isEnabled()) {
         wake.disable();
-        void wake.enable(inputDeviceId).catch((e) => console.error('[wake] re-enable failed', e));
+        syncWake();
       }
     }
     if (env.payload.key === 'outputDeviceId') {
@@ -149,7 +177,9 @@ async function main(): Promise<VoiceHost | undefined> {
 }
 
 let _voiceHost: VoiceHost | undefined;
-void main().then((h) => { _voiceHost = h; });
+void main().then((h) => {
+  _voiceHost = h;
+});
 
 // Close the voice session on page unload so OpenAI doesn't hold a stale session
 // across HMR reloads or F5 restarts.

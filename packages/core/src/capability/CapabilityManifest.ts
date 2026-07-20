@@ -89,12 +89,23 @@ export function renderVoiceSummary(entries: CapabilityManifestEntry[]): string {
 
   const lines: string[] = [];
   if (skills.length) {
-    const shown = skills.slice(0, VOICE_SUMMARY_MAX_ITEMS).map((s) => s.name).join(', ');
-    const more = skills.length > VOICE_SUMMARY_MAX_ITEMS ? ` (+${skills.length - VOICE_SUMMARY_MAX_ITEMS} more)` : '';
+    const shown = skills
+      .slice(0, VOICE_SUMMARY_MAX_ITEMS)
+      .map((s) => s.name)
+      .join(', ');
+    const more =
+      skills.length > VOICE_SUMMARY_MAX_ITEMS
+        ? ` (+${skills.length - VOICE_SUMMARY_MAX_ITEMS} more)`
+        : '';
     lines.push(`Skills/commands you can run: ${shown}${more}.`);
   }
   if (agents.length) {
-    lines.push(`Agents available: ${agents.slice(0, 8).map((a) => a.name).join(', ')}.`);
+    lines.push(
+      `Agents available: ${agents
+        .slice(0, 8)
+        .map((a) => a.name)
+        .join(', ')}.`,
+    );
   }
   if (mcp.length) {
     const connected = mcp.filter((m) => m.status === 'connected').map((m) => m.name);
@@ -108,7 +119,9 @@ export function renderVoiceSummary(entries: CapabilityManifestEntry[]): string {
 /** A never-ending user-message stream so the session stays open while we read. */
 async function* pendingInput(signal: AbortSignal): AsyncGenerator<SDKUserMessage> {
   if (signal.aborted) return;
-  await new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }));
+  await new Promise<void>((resolve) =>
+    signal.addEventListener('abort', () => resolve(), { once: true }),
+  );
 }
 
 export interface BuildManifestDeps {
@@ -122,7 +135,9 @@ export interface BuildManifestDeps {
  * Build one manifest snapshot. Opens a query (with a pending input so the session
  * initializes), reads the three introspection methods, then aborts to close it.
  */
-export async function buildCapabilityManifest(deps: BuildManifestDeps): Promise<CapabilityManifest> {
+export async function buildCapabilityManifest(
+  deps: BuildManifestDeps,
+): Promise<CapabilityManifest> {
   const abort = new AbortController();
   const options: Options = { ...deps.options, abortController: abort };
   const q = deps.queryFn({ prompt: pendingInput(abort.signal), options });

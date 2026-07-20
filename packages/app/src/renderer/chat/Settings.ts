@@ -36,9 +36,16 @@ export class Settings {
     }
   }
 
-  private template(cfg: Record<string, unknown>, hasKey: boolean, devices: MediaDeviceInfo[]): string {
+  private template(
+    cfg: Record<string, unknown>,
+    hasKey: boolean,
+    devices: MediaDeviceInfo[],
+  ): string {
     const str = (k: string) => escapeHtml(String(cfg[k] ?? ''));
     const checked = (k: string) => (cfg[k] === true ? 'checked' : '');
+    /** string[] config → one path per textarea line. */
+    const strLines = (k: string) =>
+      escapeHtml(Array.isArray(cfg[k]) ? (cfg[k] as unknown[]).map(String).join('\n') : '');
     const deviceOpts = (kind: MediaDeviceKind, selected: unknown) => {
       const opts = devices
         .filter((d) => d.kind === kind)
@@ -78,7 +85,10 @@ export class Settings {
       ['light', 'Light'],
       ['dark', 'Dark'],
     ]
-      .map(([v, label]) => `<option value="${v}" ${cfg.theme === v ? 'selected' : ''}>${label}</option>`)
+      .map(
+        ([v, label]) =>
+          `<option value="${v}" ${cfg.theme === v ? 'selected' : ''}>${label}</option>`,
+      )
       .join('');
     return `
       <h2>Settings</h2>
@@ -92,6 +102,9 @@ export class Settings {
       <label>Speaker<select data-cfg="outputDeviceId">${deviceOpts('audiooutput', cfg.outputDeviceId)}</select></label>
       <label>Claude host<select data-cfg="claudeHost">${hostOpts}</select></label>
       <label>Project folder<input data-cfg="claudeCwd" value="${str('claudeCwd')}" placeholder="path to the repo Claude should work in, e.g. C:\\code\\amethyst"></label>
+      <label>Repo roots (one per line)<textarea data-cfg="repoRoots" data-cfg-lines rows="2" placeholder="C:\\_repos&#10;\\\\wsl.localhost\\Ubuntu-22.04\\home\\me\\repos">${strLines('repoRoots')}</textarea></label>
+      <label>Environment notes<textarea data-cfg="envNotes" rows="2" placeholder="anything the assistant should know about your machine and folders">${str('envNotes')}</textarea></label>
+      <label>Knowledge vault folder<input data-cfg="vaultPath" value="${str('vaultPath')}" placeholder="path to your context2 / claude-obsidian vault"></label>
       <label>Tool permissions<select data-cfg="toolPermissionMode">${permOpts}</select></label>
       <label>Push-to-talk hotkey<input data-cfg="hotkey" data-hotkey readonly value="${str('hotkey')}" placeholder="Click, then press keys"></label>
       <label>"Explain selection" hotkey<input data-cfg="explainHotkey" data-hotkey readonly value="${str('explainHotkey')}" placeholder="Click, then press keys"></label>
@@ -121,8 +134,16 @@ export class Settings {
       const key = node.dataset.cfg!;
       const input = node as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement;
       const isCheckbox = input instanceof HTMLInputElement && input.type === 'checkbox';
+      const isLines = node.hasAttribute('data-cfg-lines');
       input.addEventListener('change', () => {
-        const value = isCheckbox ? (input as HTMLInputElement).checked : input.value;
+        const value = isCheckbox
+          ? (input as HTMLInputElement).checked
+          : isLines
+            ? input.value
+                .split('\n')
+                .map((l) => l.trim())
+                .filter(Boolean)
+            : input.value;
         void this.bridge.setConfig(key, value).then(() => this.status(`Saved ${key}.`));
       });
     });

@@ -24,7 +24,12 @@ describe('MemoryStore', () => {
     const store = new MemoryStore({ dir, now });
     store.remember('editor', 'VS Code', 'preference');
     store.remember('timezone', 'PST', 'fact');
-    expect(store.recall().map((e) => e.key).sort()).toEqual(['editor', 'timezone']);
+    expect(
+      store
+        .recall()
+        .map((e) => e.key)
+        .sort(),
+    ).toEqual(['editor', 'timezone']);
 
     // Update-not-append: same key overwrites.
     store.remember('editor', 'Cursor', 'preference');
@@ -76,7 +81,10 @@ describe('remember tool', () => {
   it('stores a fact when enabled', async () => {
     const store = new MemoryStore({ dir: tempDir(), now });
     const t = buildMemoryTool(deps(store));
-    const r = await t.handler({ key: 'coffee', value: 'oat latte', scope: 'preference' }, undefined);
+    const r = await t.handler(
+      { key: 'coffee', value: 'oat latte', scope: 'preference' },
+      undefined,
+    );
     expect(r.isError).toBeUndefined();
     expect(store.recall('coffee')[0]?.value).toBe('oat latte');
   });
@@ -90,7 +98,10 @@ describe('remember tool', () => {
 });
 
 function textOf(result: { content: Array<{ type: string; text?: string }> }): string {
-  return result.content.filter((c) => c.type === 'text').map((c) => c.text).join('\n');
+  return result.content
+    .filter((c) => c.type === 'text')
+    .map((c) => c.text)
+    .join('\n');
 }
 
 describe('recall tool', () => {

@@ -29,9 +29,24 @@ export interface CaseResult {
 // --- Routing goldens: a free-text request should rank the right capability first.
 const MANIFEST: CapabilityManifestEntry[] = [
   { kind: 'command', name: 'deploy', description: 'Deploy the app to production', source: 'user' },
-  { kind: 'skill', name: 'summarize', description: 'Summarize a document or webpage', source: 'user' },
-  { kind: 'agent', name: 'test-writer', description: 'Write unit tests for code', source: 'project' },
-  { kind: 'command', name: 'commit', description: 'Create a git commit with a message', source: 'builtin' },
+  {
+    kind: 'skill',
+    name: 'summarize',
+    description: 'Summarize a document or webpage',
+    source: 'user',
+  },
+  {
+    kind: 'agent',
+    name: 'test-writer',
+    description: 'Write unit tests for code',
+    source: 'project',
+  },
+  {
+    kind: 'command',
+    name: 'commit',
+    description: 'Create a git commit with a message',
+    source: 'builtin',
+  },
 ];
 const ROUTING: Array<{ query: string; expect: string }> = [
   { query: 'deploy my app to prod', expect: 'deploy' },
@@ -54,9 +69,23 @@ function checkRouting(): CaseResult[] {
 
 // --- Speech goldens: markdown/reasoning must be flattened before TTS.
 const SPEECH: Array<{ name: string; input: string; include?: string[]; exclude?: string[] }> = [
-  { name: 'strips think block', input: '<think>plan</think>Hello.', exclude: ['plan', '<think>'], include: ['Hello.'] },
-  { name: 'code fence not read aloud', input: 'Run:\n```\nrm -rf /\n```\ndone', exclude: ['rm -rf', '```'] },
-  { name: 'emphasis unwrapped', input: 'Use **bold** and `code`.', include: ['bold', 'code'], exclude: ['**', '`'] },
+  {
+    name: 'strips think block',
+    input: '<think>plan</think>Hello.',
+    exclude: ['plan', '<think>'],
+    include: ['Hello.'],
+  },
+  {
+    name: 'code fence not read aloud',
+    input: 'Run:\n```\nrm -rf /\n```\ndone',
+    exclude: ['rm -rf', '```'],
+  },
+  {
+    name: 'emphasis unwrapped',
+    input: 'Use **bold** and `code`.',
+    include: ['bold', 'code'],
+    exclude: ['**', '`'],
+  },
 ];
 
 function checkSpeech(): CaseResult[] {
@@ -129,7 +158,14 @@ async function runLlmTier(): Promise<CaseResult[]> {
       () => {},
     );
     const ok = /paris/i.test(reply);
-    return [{ suite: 'llm', name: 'answers a factual question', ok, detail: ok ? undefined : `got "${reply}"` }];
+    return [
+      {
+        suite: 'llm',
+        name: 'answers a factual question',
+        ok,
+        detail: ok ? undefined : `got "${reply}"`,
+      },
+    ];
   } catch (err) {
     return [{ suite: 'llm', name: 'answers a factual question', ok: false, detail: String(err) }];
   }
@@ -138,7 +174,9 @@ async function runLlmTier(): Promise<CaseResult[]> {
 async function main(): Promise<void> {
   const results = [...runGoldenSuites(), ...(await runLlmTier())];
   for (const r of results) {
-    console.log(`${r.ok ? 'PASS' : 'FAIL'} [${r.suite}] ${r.name}${r.detail ? ` — ${r.detail}` : ''}`);
+    console.log(
+      `${r.ok ? 'PASS' : 'FAIL'} [${r.suite}] ${r.name}${r.detail ? ` — ${r.detail}` : ''}`,
+    );
   }
   const failed = results.filter((r) => !r.ok);
   console.log(`\n${results.length - failed.length}/${results.length} passed`);

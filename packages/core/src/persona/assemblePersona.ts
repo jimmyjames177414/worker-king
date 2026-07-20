@@ -8,7 +8,9 @@ import type { WorkerKingConfig } from '../config/ConfigStore.js';
  * {{char}}/{{user}}), producing the same `append` string — so ClaudeBackend and
  * the Supervisor don't change when cards arrive.
  */
-export function assemblePersonaAppend(config: Pick<WorkerKingConfig, 'assistantName' | 'personality'>): string {
+export function assemblePersonaAppend(
+  config: Pick<WorkerKingConfig, 'assistantName' | 'personality'>,
+): string {
   const name = config.assistantName?.trim() || 'WorkerKing';
   const personality = config.personality?.trim();
   const lines = [

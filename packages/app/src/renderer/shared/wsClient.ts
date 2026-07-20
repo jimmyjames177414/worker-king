@@ -155,11 +155,7 @@ export class WsClient {
     this.ws?.send(wire);
   }
 
-  send<K extends WsMessageKind>(
-    kind: K,
-    payload: PayloadOf<K>,
-    opts?: { replyTo?: string },
-  ): void {
+  send<K extends WsMessageKind>(kind: K, payload: PayloadOf<K>, opts?: { replyTo?: string }): void {
     const wire = serializeEnvelope(makeEnvelope(browserCtx, kind, payload, opts));
     if (this.ready && this.ws?.readyState === WebSocket.OPEN) this.ws.send(wire);
     else this.outbox.push(wire); // buffered until welcome
@@ -222,9 +218,11 @@ export class WsClient {
 
 /** Resolve the daemon connection from the preload bridge and build a client. */
 export async function connectToDaemon(): Promise<WsClient> {
-  const bridge = (window as unknown as {
-    workerking?: { getConnection(): Promise<WsClientConnection | undefined> };
-  }).workerking;
+  const bridge = (
+    window as unknown as {
+      workerking?: { getConnection(): Promise<WsClientConnection | undefined> };
+    }
+  ).workerking;
   if (!bridge) throw new Error('workerking preload bridge missing');
   const conn = await bridge.getConnection();
   if (!conn) throw new Error('no daemon connection available');

@@ -381,9 +381,6 @@ export function serializeEnvelope(env: WsEnvelope): string {
 }
 
 /** Type guard narrowing an envelope to a specific kind. */
-export function isKind<K extends WsMessageKind>(
-  env: WsEnvelope,
-  kind: K,
-): env is WsEnvelope<K> {
+export function isKind<K extends WsMessageKind>(env: WsEnvelope, kind: K): env is WsEnvelope<K> {
   return env.kind === kind;
 }

@@ -121,7 +121,8 @@ describe('ClaudeBackend.respond', () => {
     cwd = '/repo/b';
     await backend.respond('three', () => {}); // cwd changed → no resume
 
-    const opts = (i: number) => (seen[i] as { options?: { resume?: string; cwd?: string } }).options;
+    const opts = (i: number) =>
+      (seen[i] as { options?: { resume?: string; cwd?: string } }).options;
     expect(opts(1)?.resume).toBe('s1'); // 2nd call resumed within the same project
     expect(opts(1)?.cwd).toBe('/repo/a');
     expect(opts(2)?.resume).toBeUndefined(); // 3rd call: project switched → fresh session

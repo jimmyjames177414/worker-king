@@ -7,7 +7,13 @@ import {
 } from './MemoryIndex.js';
 import type { MemoryEntry } from './MemoryStore.js';
 
-function entry(key: string, value: string, scope: MemoryEntry['scope'], ts: number, stale = false): MemoryEntry {
+function entry(
+  key: string,
+  value: string,
+  scope: MemoryEntry['scope'],
+  ts: number,
+  stale = false,
+): MemoryEntry {
   return { key, value, scope, ts, provenance: 'test', stale };
 }
 
@@ -119,7 +125,10 @@ describe('createMemoryIndex', () => {
   });
 
   it('uses the injected embedder when semantic is on', async () => {
-    const index = await createMemoryIndex(fakeStore([]), { semantic: true, embedder: fakeEmbedder() });
+    const index = await createMemoryIndex(fakeStore([]), {
+      semantic: true,
+      embedder: fakeEmbedder(),
+    });
     expect(index).toBeInstanceOf(SemanticMemoryIndex);
   });
 

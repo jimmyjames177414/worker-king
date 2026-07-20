@@ -110,11 +110,7 @@ export class DaemonClient {
     this.reconnectDelay = Math.min(this.reconnectDelay * 2, 8000);
   }
 
-  send<K extends WsMessageKind>(
-    kind: K,
-    payload: PayloadOf<K>,
-    opts?: { replyTo?: string },
-  ): void {
+  send<K extends WsMessageKind>(kind: K, payload: PayloadOf<K>, opts?: { replyTo?: string }): void {
     if (this.ws?.readyState !== WebSocket.OPEN) return;
     this.ws.send(serializeEnvelope(makeEnvelope(ctx, kind, payload, opts)));
   }

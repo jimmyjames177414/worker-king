@@ -21,7 +21,12 @@ describe('ReminderStore', () => {
     store.add('past thing', 500, 'r2'); // already due at t=1000
 
     const reloaded = new ReminderStore({ dir, now: () => t });
-    expect(reloaded.pending().map((r) => r.id).sort()).toEqual(['r1', 'r2']);
+    expect(
+      reloaded
+        .pending()
+        .map((r) => r.id)
+        .sort(),
+    ).toEqual(['r1', 'r2']);
     expect(reloaded.due().map((r) => r.id)).toEqual(['r2']); // fireAt 500 <= now 1000
 
     reloaded.markFired('r2');
@@ -130,7 +135,11 @@ describe('notify + set_reminder tools', () => {
     const notices: ProactiveNotice[] = [];
     const t = buildNotifyTool(deps({ proactiveNotify: (n) => notices.push(n) }));
     await t.handler({ text: 'Build finished', level: 'success', speak: true }, undefined);
-    expect(notices[0]).toMatchObject({ text: 'Build finished', level: 'success', source: 'notify-tool' });
+    expect(notices[0]).toMatchObject({
+      text: 'Build finished',
+      level: 'success',
+      source: 'notify-tool',
+    });
   });
 
   it('set_reminder schedules a future reminder from delaySeconds', async () => {
@@ -148,7 +157,9 @@ describe('notify + set_reminder tools', () => {
   });
 
   it('set_reminder refuses when reminders are disabled', async () => {
-    const t = buildReminderTool(deps({ config: new ConfigStore({ remindersEnabled: false }), scheduleReminder: vi.fn() }));
+    const t = buildReminderTool(
+      deps({ config: new ConfigStore({ remindersEnabled: false }), scheduleReminder: vi.fn() }),
+    );
     const r = await t.handler({ message: 'x', delaySeconds: 60 }, undefined);
     expect(r.isError).toBe(true);
   });

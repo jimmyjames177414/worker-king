@@ -2,7 +2,12 @@ import { describe, it, expect } from 'vitest';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { TaskManager, type TaskRunner, type TaskEmitter, type TaskRunEvents } from './TaskManager.js';
+import {
+  TaskManager,
+  type TaskRunner,
+  type TaskEmitter,
+  type TaskRunEvents,
+} from './TaskManager.js';
 import { ProgressMapper, friendlyTool } from './ProgressMapper.js';
 import { TaskStore } from './TaskStore.js';
 import type { Task, TaskProgress } from '@workerking/shared';
@@ -75,6 +80,33 @@ describe('TaskManager', () => {
     expect(started).toBe(true);
   });
 
+  it('threads a per-task cwd through to the runner', async () => {
+    let seen: { cwd?: string } | undefined = { cwd: 'unset' };
+    const runner: TaskRunner = {
+      run: async (_p, events, _s, opts) => {
+        seen = opts;
+        events.onDone('ok');
+      },
+    };
+    const { tm } = makeManager(runner);
+    tm.create('build it', { cwd: 'C:\\_repos\\amethyst' });
+    tm.create('and this one in the default project');
+    await new Promise((r) => setTimeout(r, 0));
+    expect(seen).toBeUndefined(); // second task: no override passed
+    // (first task's opts asserted via a fresh runner to avoid ordering coupling)
+    let first: { cwd?: string } | undefined;
+    const runner2: TaskRunner = {
+      run: async (_p, events, _s, opts) => {
+        first = opts;
+        events.onDone('ok');
+      },
+    };
+    const { tm: tm2 } = makeManager(runner2);
+    tm2.create('build it', { cwd: 'C:\\_repos\\amethyst' });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(first).toEqual({ cwd: 'C:\\_repos\\amethyst' });
+  });
+
   it('emits throttled progress for tool uses and a final done', async () => {
     const runner: TaskRunner = {
       run: async (_p, events: TaskRunEvents) => {
@@ -125,7 +157,8 @@ describe('TaskManager', () => {
 
   it('check returns a running task and cancel of unknown id is false', async () => {
     const runner: TaskRunner = {
-      run: (_p, _e, signal) => new Promise((resolve) => signal.addEventListener('abort', () => resolve())),
+      run: (_p, _e, signal) =>
+        new Promise((resolve) => signal.addEventListener('abort', () => resolve())),
     };
     const { tm } = makeManager(runner);
     const id = tm.create('job');
@@ -156,7 +189,14 @@ describe('TaskManager concurrency', () => {
     const c = collectEmitter();
     clock = 0;
     idN = 0;
-    const tm = new TaskManager({ runner, emit: c.emit, now, newId, throttleMs: 100, maxConcurrent });
+    const tm = new TaskManager({
+      runner,
+      emit: c.emit,
+      now,
+      newId,
+      throttleMs: 100,
+      maxConcurrent,
+    });
     return { tm, ...c };
   }
 

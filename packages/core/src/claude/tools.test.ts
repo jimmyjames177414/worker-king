@@ -47,8 +47,7 @@ describe('screen-awareness tools', () => {
 
     const r = await captureScreen.handler({ target: 'screen' }, undefined);
     const image = r.content.find((c) => c.type === 'image') as
-      | { type: 'image'; data: string; mimeType: string }
-      | undefined;
+      { type: 'image'; data: string; mimeType: string } | undefined;
     expect(image).toBeDefined();
     expect(image?.mimeType).toBe('image/png');
     expect(image?.data).toBe('ZmFrZS1wbmc=');
@@ -106,6 +105,7 @@ describe('screen-awareness tools', () => {
     expect(WORKERKING_TOOL_ALLOWLIST).toEqual([
       'mcp__workerking__get_active_window',
       'mcp__workerking__capture_screen',
+      'mcp__workerking__get_standup_state',
       'mcp__workerking__remember',
       'mcp__workerking__recall',
       'mcp__workerking__list_memories',
