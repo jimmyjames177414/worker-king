@@ -115,6 +115,9 @@ describe('SprintContext.sprintBlock', () => {
     await ctx.refresh();
     const block = ctx.sprintBlock();
     expect(block).toContain('… and 2 more');
-    expect(block).not.toContain('D');
+    // The 4th/5th items are dropped. Match the rendered list-row form ("    - D")
+    // rather than a bare 'D', which would also match the 'D' in "Last ADO fetch".
+    expect(block).not.toContain('- D');
+    expect(block).not.toContain('- E');
   });
 });

@@ -1,5 +1,11 @@
 import type { WsServer, WsClient } from '../ws/server.js';
-import type { WsEnvelope } from '@workerking/shared';
+import type { ActivityStep, WsEnvelope } from '@workerking/shared';
+import {
+  activityLabel,
+  previewToolResult,
+  summarizeToolInput,
+  truncateThinking,
+} from '@workerking/shared';
 import { ClaudeAuthError, ClaudeRateLimitError } from '../claude/ClaudeBackend.js';
 import type { ConfigStore } from '../config/ConfigStore.js';
 import type { Brain } from '../brain/Brain.js';
@@ -35,6 +41,12 @@ export class Supervisor {
   private readonly tasks: TaskManager;
   /** Chat turns run one at a time; see handleChat(). */
   private chatChain: Promise<void> = Promise.resolve();
+  /** Chat turns currently streaming (feeds the avatar "working" state). */
+  private chatBusy = 0;
+  /** Tasks currently executing (feeds the avatar "working" state). */
+  private readonly runningTaskIds = new Set<string>();
+  /** Last avatar.state we broadcast, so refreshAvatar() only emits on a change. */
+  private lastAvatar: 'idle' | 'thinking' = 'idle';
 
   constructor(
     private readonly server: WsServer,
@@ -54,15 +66,29 @@ export class Supervisor {
     this.tasks = new TaskManager({
       runner: brain,
       emit: {
-        created: (task) => server.broadcast('task.created', { task }),
-        updated: (task) => server.broadcast('task.updated', { task }),
+        created: (task) => {
+          server.broadcast('task.created', { task });
+          this.trackTask(task.id, task.state === 'running');
+        },
+        updated: (task) => {
+          server.broadcast('task.updated', { task });
+          this.trackTask(task.id, task.state === 'running');
+        },
         progress: (taskId, progress) => server.broadcast('task.progress', { taskId, progress }),
+        activity: (_taskId, step) => this.broadcastActivity(step),
         done: (task) => {
           server.broadcast('task.done', { task });
+          this.trackTask(task.id, false);
           this.log?.append('task', `${task.prompt} → ${task.result?.summary ?? 'done'}`);
         },
-        error: (taskId, error) => server.broadcast('task.error', { taskId, error }),
-        cancelled: (taskId) => server.broadcast('task.cancelled', { taskId }),
+        error: (taskId, error) => {
+          server.broadcast('task.error', { taskId, error });
+          this.trackTask(taskId, false);
+        },
+        cancelled: (taskId) => {
+          server.broadcast('task.cancelled', { taskId });
+          this.trackTask(taskId, false);
+        },
       },
       now: daemonEnvelopeContext.now,
       newId: daemonEnvelopeContext.newId,
@@ -83,6 +109,34 @@ export class Supervisor {
     this.config.onChange((key, value) => {
       this.server.broadcast('config.changed', { key, value });
     });
+  }
+
+  /** Track a task as running (or not) and refresh the avatar's working state. */
+  private trackTask(taskId: string, running: boolean): void {
+    if (running) this.runningTaskIds.add(taskId);
+    else this.runningTaskIds.delete(taskId);
+    this.refreshAvatar();
+  }
+
+  /**
+   * Drive the floating avatar from whether the agent is doing anything (a chat
+   * turn streaming OR a task running). Idempotent: broadcasts only on a change,
+   * so a busy stretch doesn't spam the bus. The overlay lets a live voice
+   * session take precedence over this (voice owns the avatar while it's active).
+   */
+  private refreshAvatar(): void {
+    const want: 'idle' | 'thinking' =
+      this.chatBusy > 0 || this.runningTaskIds.size > 0 ? 'thinking' : 'idle';
+    if (want === this.lastAvatar) return;
+    this.lastAvatar = want;
+    this.server.broadcast('avatar.state', { state: want });
+  }
+
+  /** Broadcast one activity step, honoring the master + thinking config gates. */
+  private broadcastActivity(step: ActivityStep): void {
+    if (this.config.get('activityStreamEnabled') === false) return;
+    if (step.step.kind === 'thinking' && this.config.get('activityShowThinking') === false) return;
+    this.server.broadcast('activity.step', step);
   }
 
   private async dispatch(client: WsClient, env: WsEnvelope): Promise<void> {
@@ -196,10 +250,52 @@ export class Supervisor {
     // another conversation while the reply streams, the assistant turn must
     // still land here, not in whichever conversation is current at completion.
     const conversationId = this.history?.append('user', text);
+    // Live execution feed for this turn: sent to the requesting client only
+    // (like the delta stream), correlated by messageId. Gated by config.
+    const streamActivity = this.config.get('activityStreamEnabled') !== false;
+    const showThinking = this.config.get('activityShowThinking') !== false;
+    let seq = 0;
+    const sendStep = (step: ActivityStep['step']) => {
+      client.send('activity.step', { ts: daemonEnvelopeContext.now(), seq: seq++, messageId, step });
+    };
+    const activity = streamActivity
+      ? {
+          onToolInput: ({ id, name, input }: { id: string; name: string; input: unknown }) =>
+            sendStep({
+              kind: 'tool_use',
+              toolId: id,
+              tool: name,
+              label: activityLabel(name),
+              summary: summarizeToolInput(name, input),
+            }),
+          onToolResult: ({
+            toolId,
+            isError,
+            content,
+          }: {
+            toolId: string;
+            isError: boolean;
+            content: unknown;
+          }) => {
+            const { ok, preview } = previewToolResult(content, isError);
+            sendStep({ kind: 'tool_result', toolId, ok, preview });
+          },
+          ...(showThinking
+            ? { onThinking: (t: string) => sendStep({ kind: 'thinking', text: truncateThinking(t) }) }
+            : {}),
+        }
+      : undefined;
+
+    this.chatBusy++;
+    this.refreshAvatar();
     try {
-      const full = await this.brain.respond(text, (delta) => {
-        client.send('chat.assistant_delta', { messageId, delta });
-      });
+      const full = await this.brain.respond(
+        text,
+        (delta) => {
+          client.send('chat.assistant_delta', { messageId, delta });
+        },
+        activity,
+      );
       client.send('chat.assistant_done', { messageId, text: full });
       if (conversationId) this.history?.appendTo(conversationId, 'assistant', full);
       this.log?.append('chat', `user: ${text} | assistant: ${full.slice(0, 200)}`);
@@ -231,6 +327,9 @@ export class Supervisor {
         message: `Brain failed: ${String(err)}`,
         code,
       });
+    } finally {
+      this.chatBusy--;
+      this.refreshAvatar();
     }
   }
 

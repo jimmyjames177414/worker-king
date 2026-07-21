@@ -62,6 +62,21 @@ export interface ClaudeBackendOptions {
   log?: Logger;
 }
 
+/**
+ * Optional richer execution handlers for the live activity feed. Layered on top
+ * of the existing `onDelta`/`onToolUse` (which stay the source of truth for the
+ * streamed reply text and the throttled voice progress); all are optional so the
+ * voice/chat paths that don't want a feed pay nothing.
+ */
+export interface ActivityHandlers {
+  /** A tool call started, with its full input (path/command/args). */
+  onToolInput?: (u: { id: string; name: string; input: unknown }) => void;
+  /** A tool call returned; correlate to onToolInput by `toolId`. */
+  onToolResult?: (r: { toolId: string; isError: boolean; content: unknown }) => void;
+  /** A complete thinking block. */
+  onThinking?: (text: string) => void;
+}
+
 export class ClaudeAuthError extends Error {
   constructor(message: string) {
     super(message);
@@ -162,16 +177,21 @@ export class ClaudeBackend implements Brain {
    */
   private async consume(
     iterable: AsyncIterable<SDKMessage>,
-    handlers: { onDelta?: (delta: string) => void; onToolUse?: (name: string) => void },
+    handlers: {
+      onDelta?: (delta: string) => void;
+      onToolUse?: (name: string) => void;
+    } & ActivityHandlers,
     o: { trackSession?: boolean } = {},
   ): Promise<string> {
     let resultText = '';
     for await (const msg of iterable) {
+      // Sub-agent (Task) streams carry parent_tool_use_id — their internal text
+      // and nested tool calls must not interleave into the top-level view. The
+      // parent `Task` tool_use itself is top-level and still shows.
+      const nested = Boolean((msg as { parent_tool_use_id?: string | null }).parent_tool_use_id);
       switch (msg.type) {
         case 'stream_event': {
-          // Subagent (Task) streams carry parent_tool_use_id — their internal
-          // text must not interleave into the user-visible reply.
-          if ((msg as { parent_tool_use_id?: string | null }).parent_tool_use_id) break;
+          if (nested) break;
           const delta = extractTextDelta(msg.event);
           if (delta) handlers.onDelta?.(delta);
           break;
@@ -182,6 +202,20 @@ export class ClaudeBackend implements Brain {
               this.log.debug('tool_use', { name });
               handlers.onToolUse(name);
             }
+          }
+          if (!nested && handlers.onToolInput) {
+            for (const u of extractToolUseBlocks(msg)) handlers.onToolInput(u);
+          }
+          if (!nested && handlers.onThinking) {
+            for (const t of extractThinking(msg)) handlers.onThinking(t);
+          }
+          break;
+        }
+        case 'user': {
+          // A tool_result arrives as a subsequent user message. Surfaced only for
+          // the activity feed; text still arrives via stream_event.
+          if (!nested && handlers.onToolResult) {
+            for (const r of extractToolResults(msg)) handlers.onToolResult(r);
           }
           break;
         }
@@ -202,14 +236,18 @@ export class ClaudeBackend implements Brain {
           break;
         }
         default:
-          // user/system/etc. — ignored; text arrives via stream_event.
+          // system/etc. — ignored; text arrives via stream_event.
           break;
       }
     }
     return resultText;
   }
 
-  async respond(text: string, onDelta: (delta: string) => void): Promise<string> {
+  async respond(
+    text: string,
+    onDelta: (delta: string) => void,
+    activity?: ActivityHandlers,
+  ): Promise<string> {
     let streamed = '';
     let resultText: string;
     const resuming = Boolean(this.sessionId);
@@ -225,6 +263,7 @@ export class ClaudeBackend implements Brain {
           streamed += d;
           onDelta(d);
         },
+        ...activity,
       });
     } catch (err) {
       const normalized = this.normalizeError(err);
@@ -254,7 +293,7 @@ export class ClaudeBackend implements Brain {
       onToolUse(name: string): void;
       onDone(summary: string): void;
       onError(err: Error): void;
-    },
+    } & ActivityHandlers,
     signal: AbortSignal,
     runOpts?: { cwd?: string },
   ): Promise<void> {
@@ -279,6 +318,9 @@ export class ClaudeBackend implements Brain {
         {
           onDelta: events.onDelta,
           onToolUse: events.onToolUse,
+          onToolInput: events.onToolInput,
+          onToolResult: events.onToolResult,
+          onThinking: events.onThinking,
         },
         { trackSession: false },
       );
@@ -380,4 +422,59 @@ export function extractToolUses(msg: unknown): string[] {
   const content = m?.message?.content;
   if (!Array.isArray(content)) return [];
   return content.filter((b) => b.type === 'tool_use' && b.name).map((b) => b.name as string);
+}
+
+/**
+ * Extract full tool_use blocks (id + name + input) from an assistant message —
+ * the activity feed needs the id (to pair a result) and the input (to summarize).
+ */
+export function extractToolUseBlocks(
+  msg: unknown,
+): Array<{ id: string; name: string; input: unknown }> {
+  const m = msg as {
+    message?: { content?: Array<{ type?: string; id?: string; name?: string; input?: unknown }> };
+  };
+  const content = m?.message?.content;
+  if (!Array.isArray(content)) return [];
+  return content
+    .filter((b) => b.type === 'tool_use' && b.id && b.name)
+    .map((b) => ({ id: b.id as string, name: b.name as string, input: b.input }));
+}
+
+/**
+ * Extract tool_result blocks from a user SDK message (the SDK feeds tool output
+ * back as a user turn). `tool_use_id` correlates each result to its tool_use.
+ */
+export function extractToolResults(
+  msg: unknown,
+): Array<{ toolId: string; isError: boolean; content: unknown }> {
+  const m = msg as {
+    message?: {
+      content?: Array<{
+        type?: string;
+        tool_use_id?: string;
+        is_error?: boolean;
+        content?: unknown;
+      }>;
+    };
+  };
+  const content = m?.message?.content;
+  if (!Array.isArray(content)) return [];
+  return content
+    .filter((b) => b.type === 'tool_result' && b.tool_use_id)
+    .map((b) => ({
+      toolId: b.tool_use_id as string,
+      isError: Boolean(b.is_error),
+      content: b.content,
+    }));
+}
+
+/** Extract complete thinking-block text from an assistant SDK message. */
+export function extractThinking(msg: unknown): string[] {
+  const m = msg as { message?: { content?: Array<{ type?: string; thinking?: string }> } };
+  const content = m?.message?.content;
+  if (!Array.isArray(content)) return [];
+  return content
+    .filter((b) => b.type === 'thinking' && typeof b.thinking === 'string' && b.thinking.length > 0)
+    .map((b) => b.thinking as string);
 }

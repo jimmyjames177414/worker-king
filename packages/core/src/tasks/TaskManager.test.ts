@@ -10,12 +10,13 @@ import {
 } from './TaskManager.js';
 import { ProgressMapper, friendlyTool } from './ProgressMapper.js';
 import { TaskStore } from './TaskStore.js';
-import type { Task, TaskProgress } from '@workerking/shared';
+import type { ActivityStep, Task, TaskProgress } from '@workerking/shared';
 
 function collectEmitter() {
   const created: Task[] = [];
   const updated: Task[] = [];
   const progress: Array<{ id: string; p: TaskProgress }> = [];
+  const activity: Array<{ id: string; step: ActivityStep }> = [];
   const done: Task[] = [];
   const errors: Array<{ id: string; error: string }> = [];
   const cancelled: string[] = [];
@@ -23,11 +24,12 @@ function collectEmitter() {
     created: (t) => created.push({ ...t }),
     updated: (t) => updated.push({ ...t }),
     progress: (id, p) => progress.push({ id, p }),
+    activity: (id, step) => activity.push({ id, step }),
     done: (t) => done.push({ ...t }),
     error: (id, error) => errors.push({ id, error }),
     cancelled: (id) => cancelled.push(id),
   };
-  return { emit, created, updated, progress, done, errors, cancelled };
+  return { emit, created, updated, progress, activity, done, errors, cancelled };
 }
 
 let clock = 0;
@@ -123,6 +125,33 @@ describe('TaskManager', () => {
     expect(progress[0].p.text).toMatch(/reading a file/);
     expect(done[0]?.result?.summary).toBe('renamed 240 files');
     expect(done[0]?.state).toBe('done');
+  });
+
+  it('emits an unthrottled activity stream (tool_use → tool_result) with rising seq', async () => {
+    const runner: TaskRunner = {
+      run: async (_p, events: TaskRunEvents) => {
+        events.onToolInput?.({ id: 'tool-1', name: 'Read', input: { file_path: 'src/a.ts' } });
+        events.onToolResult?.({ toolId: 'tool-1', isError: false, content: 'file contents' });
+        events.onThinking?.('deciding what to do next');
+        events.onDone('done');
+      },
+    };
+    const { tm, activity } = makeManager(runner);
+    tm.create('inspect');
+    await new Promise((r) => setTimeout(r, 0));
+
+    const kinds = activity.map((a) => a.step.step.kind);
+    expect(kinds).toEqual(['tool_use', 'tool_result', 'thinking']);
+    const use = activity[0].step.step;
+    const result = activity[1].step.step;
+    expect(use.kind === 'tool_use' && use.toolId).toBe('tool-1');
+    expect(use.kind === 'tool_use' && use.label).toBe('Read');
+    expect(use.kind === 'tool_use' && use.summary).toBe('src/a.ts');
+    expect(result.kind === 'tool_result' && result.toolId).toBe('tool-1');
+    expect(result.kind === 'tool_result' && result.ok).toBe(true);
+    // seq strictly increases so the renderer can order across separate messages.
+    expect(activity.map((a) => a.step.seq)).toEqual([0, 1, 2]);
+    expect(activity.every((a) => a.step.taskId === 'task-1')).toBe(true);
   });
 
   it('cancel aborts the run and emits cancelled', async () => {

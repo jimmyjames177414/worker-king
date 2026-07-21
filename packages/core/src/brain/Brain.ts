@@ -1,4 +1,5 @@
 import type { TaskRunner, TaskRunEvents } from '../tasks/TaskManager.js';
+import type { ActivityHandlers } from '../claude/ClaudeBackend.js';
 
 /**
  * Brain — the pluggable engine behind both the chat path (`respond`) and the
@@ -12,9 +13,14 @@ export interface Brain extends TaskRunner {
   readonly id: string;
   /**
    * Produce a response to `text`, streaming deltas via `onDelta`.
+   * Optional `activity` handlers surface the live tool-by-tool execution feed.
    * Resolves with the full final text.
    */
-  respond(text: string, onDelta: (delta: string) => void): Promise<string>;
+  respond(
+    text: string,
+    onDelta: (delta: string) => void,
+    activity?: ActivityHandlers,
+  ): Promise<string>;
   /**
    * Drop conversation continuity so the next message starts a fresh session.
    * Wired to history.new / history.load — without it, "New chat" only switches
@@ -56,9 +62,13 @@ export class DeferredBrain implements Brain {
     return new Promise((resolve) => this.waiters.push(resolve));
   }
 
-  async respond(text: string, onDelta: (delta: string) => void): Promise<string> {
+  async respond(
+    text: string,
+    onDelta: (delta: string) => void,
+    activity?: ActivityHandlers,
+  ): Promise<string> {
     const brain = await this.waitForBrain();
-    return brain.respond(text, onDelta);
+    return brain.respond(text, onDelta, activity);
   }
 
   async run(prompt: string, events: TaskRunEvents, signal: AbortSignal): Promise<void> {
@@ -86,7 +96,11 @@ export class DeferredBrain implements Brain {
 export class EchoBrain implements Brain {
   readonly id = 'echo';
 
-  async respond(text: string, onDelta: (delta: string) => void): Promise<string> {
+  async respond(
+    text: string,
+    onDelta: (delta: string) => void,
+    _activity?: ActivityHandlers,
+  ): Promise<string> {
     const reply = `You said: ${text}`;
     // Stream word-by-word to mimic token deltas.
     const words = reply.split(' ');

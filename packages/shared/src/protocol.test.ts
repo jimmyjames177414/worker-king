@@ -42,6 +42,30 @@ describe('makeEnvelope + parseEnvelope round-trip', () => {
     expect(parsed.payload).toEqual(env.payload);
   });
 
+  it('round-trips each activity.step union arm', () => {
+    const arms = [
+      { kind: 'tool_use' as const, toolId: 't1', tool: 'Read', label: 'Read', summary: 'a.ts' },
+      { kind: 'tool_result' as const, toolId: 't1', ok: true, preview: 'contents' },
+      { kind: 'thinking' as const, text: 'reasoning' },
+    ];
+    for (const step of arms) {
+      const env = makeEnvelope(ctx, 'activity.step', { ts: 1, seq: 0, messageId: 'm1', step });
+      const parsed = parseEnvelope(serializeEnvelope(env));
+      expect(parsed.payload).toEqual(env.payload);
+    }
+  });
+
+  it('rejects an activity.step with an unknown step kind', () => {
+    const bad = {
+      v: 1,
+      id: 'x',
+      kind: 'activity.step',
+      ts: 0,
+      payload: { ts: 1, seq: 0, step: { kind: 'nope' } },
+    };
+    expect(() => parseEnvelope(bad)).toThrowError(ProtocolError);
+  });
+
   it('carries replyTo on responses', () => {
     const req = makeEnvelope(ctx, 'voice.tool_call', { name: 'x', args: {} });
     const res = makeEnvelope(

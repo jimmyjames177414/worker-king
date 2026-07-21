@@ -2,6 +2,7 @@ import { z } from 'zod';
 import {
   taskSchema,
   taskProgressSchema,
+  activityStepSchema,
   capabilityManifestSchema,
   avatarStateSchema,
   conversationMessageSchema,
@@ -155,6 +156,9 @@ const taskDonePayload = z.object({ task: taskSchema });
 const taskErrorPayload = z.object({ taskId: z.string(), error: z.string() });
 const taskCancelledPayload = z.object({ taskId: z.string() });
 
+// Live execution activity — one unthrottled step of the tool-by-tool feed.
+const activityStepPayload = activityStepSchema;
+
 const avatarStatePayload = z.object({
   state: avatarStateSchema,
   emote: z.string().optional(),
@@ -224,6 +228,8 @@ export const payloadSchemas = {
   'task.done': taskDonePayload,
   'task.error': taskErrorPayload,
   'task.cancelled': taskCancelledPayload,
+
+  'activity.step': activityStepPayload,
 
   'avatar.state': avatarStatePayload,
 
