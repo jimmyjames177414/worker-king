@@ -1,5 +1,5 @@
 import { promises as fsp } from 'node:fs';
-import { join, isAbsolute } from 'node:path';
+import { join, win32 as pathWin32, posix as pathPosix } from 'node:path';
 
 /**
  * EnvironmentContext — the daemon brain's OS-level orientation (the "main
@@ -153,7 +153,13 @@ export class EnvironmentContext {
     const input = nameOrPath.trim();
     if (!input) return { ok: false, error: 'No folder given.' };
 
-    if (isAbsolute(input) || input.startsWith('\\\\')) {
+    // Detect absolute paths with the semantics of the *target* platform, not the
+    // daemon's: a WSL/Linux daemon still manages Windows repos, and a `C:\…` path
+    // is absolute there even though POSIX isAbsolute would reject it (and vice
+    // versa). Bare-name resolution below keeps using node:path's join.
+    const isAbsolute =
+      this.platform === 'win32' ? pathWin32.isAbsolute(input) : pathPosix.isAbsolute(input);
+    if (isAbsolute || input.startsWith('\\\\')) {
       if (await this.fs.isDir(input)) return { ok: true, path: input };
       return { ok: false, error: `Folder does not exist: ${input}` };
     }

@@ -19,7 +19,11 @@ export class SprintContext {
   /** Synchronous — returns cached block or triggers a background refresh. */
   sprintBlock(): string {
     const age = Date.now() - this.fetchedAt;
-    if (this.cached !== null && age < this.ttlMs) return this.cached;
+    // Respect the TTL by recency, not by whether we have a block: a *failed*
+    // fetch also sets fetchedAt, and re-fetching on every call until it succeeds
+    // is exactly the retry spam the TTL exists to prevent. `fetchedAt === 0`
+    // (never fetched) makes `age` huge, so the first call always refreshes.
+    if (age < this.ttlMs) return this.cached ?? '';
     this.refresh().catch(() => {});
     return this.cached ?? '';
   }
