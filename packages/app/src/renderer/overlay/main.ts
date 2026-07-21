@@ -89,25 +89,24 @@ async function main(): Promise<VoiceHost | undefined> {
   // Audio-reactive avatar (2.2): output amplitude drives the mouth/scale.
   client.on('voice.audio_level', (env) => avatar.setLevel(env.payload.level));
 
-  // Track the live capability summary so the voice model knows what it can route to.
-  let capabilitySummary = '';
-  client.on('capability.updated', (env) => {
-    capabilitySummary = env.payload.manifest.voiceSummary;
-  });
+  // The daemon assembles the full voice system prompt (behavioral base +
+  // capability list + level-gated ambient context) and pushes it via
+  // voice.context. Keep the latest; getPersona() returns it. A minimal fallback
+  // covers the window before the first push (or a run without the real brain).
+  const VOICE_FALLBACK_PROMPT =
+    'You are WorkerKing, a concise desktop voice assistant. For anything substantive — running ' +
+    'commands, editing files, or answering questions that need tools — say a short filler like ' +
+    '"On it", then call delegate_to_worker; read out progress and results naturally.';
+  let latestVoicePrompt: string | undefined;
 
   // Voice: push-to-talk (global hotkey) toggles a GPT Realtime session.
-  const voiceHost = new VoiceHost(client, bridge, () => {
-    const base = [
-      'You are WorkerKing, a helpful desktop voice assistant. Keep spoken replies concise and natural.',
-      'You are a thin voice layer over a capable worker (Claude Code). Handle greetings and small talk',
-      'yourself, but for ANYTHING substantive — running commands, editing files, answering questions that',
-      'need tools — first say a short filler like "On it" or "Let me take care of that", then call',
-      'delegate_to_worker with the task. Progress and results will be spoken to the user automatically as',
-      "they arrive; read them out naturally. Use check_task_status ONLY when the user asks how it's going —",
-      'never poll it on your own or narrate repeated status checks. While a task runs, stay quiet unless',
-      'the user speaks or an update arrives. Use cancel_task if they want to stop.',
-    ].join(' ');
-    return capabilitySummary ? `${base}\n\n${capabilitySummary}` : base;
+  const voiceHost = new VoiceHost(client, bridge, () => latestVoicePrompt ?? VOICE_FALLBACK_PROMPT);
+
+  // A fresh voice context: store it (next session start uses it) and hot-patch a
+  // live session in place so a settings/persona change applies without restart.
+  client.on('voice.context', (env) => {
+    latestVoicePrompt = env.payload.systemPrompt;
+    voiceHost.updateContext(latestVoicePrompt);
   });
 
   // Left-click toggles voice (hotkey is wired inside VoiceHost); right-click opens chat.

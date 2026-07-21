@@ -90,6 +90,17 @@ export class Settings {
           `<option value="${v}" ${cfg.theme === v ? 'selected' : ''}>${label}</option>`,
       )
       .join('');
+    const voiceCtxOpts = [
+      ['thin', 'Thin — capabilities only'],
+      ['standard', 'Standard — + persona & orientation'],
+      ['rich', 'Rich — + sprint & memory'],
+      ['maximal', 'Maximal — + full environment'],
+    ]
+      .map(
+        ([v, label]) =>
+          `<option value="${v}" ${(cfg.voiceContextLevel ?? 'standard') === v ? 'selected' : ''}>${label}</option>`,
+      )
+      .join('');
     return `
       <h2>Settings</h2>
       <label>Assistant name<input data-cfg="assistantName" value="${str('assistantName')}"></label>
@@ -98,6 +109,7 @@ export class Settings {
       <label>Personality<textarea data-cfg="personality" rows="3">${str('personality')}</textarea></label>
       <label>Voice engine<select data-cfg="voiceProvider">${providerOpts}</select></label>
       <label>Voice model<select data-cfg="openaiModel">${modelOpts}</select></label>
+      <label>Voice context<select data-cfg="voiceContextLevel">${voiceCtxOpts}</select></label>
       <label>Microphone<select data-cfg="inputDeviceId">${deviceOpts('audioinput', cfg.inputDeviceId)}</select></label>
       <label>Speaker<select data-cfg="outputDeviceId">${deviceOpts('audiooutput', cfg.outputDeviceId)}</select></label>
       <label>Claude host<select data-cfg="claudeHost">${hostOpts}</select></label>

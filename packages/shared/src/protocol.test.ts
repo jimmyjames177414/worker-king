@@ -66,6 +66,12 @@ describe('makeEnvelope + parseEnvelope round-trip', () => {
     expect(() => parseEnvelope(bad)).toThrowError(ProtocolError);
   });
 
+  it('round-trips a voice.context broadcast', () => {
+    const env = makeEnvelope(ctx, 'voice.context', { systemPrompt: 'You are WorkerKing…' });
+    const parsed = parseEnvelope(serializeEnvelope(env));
+    expect(parsed.payload).toEqual(env.payload);
+  });
+
   it('carries replyTo on responses', () => {
     const req = makeEnvelope(ctx, 'voice.tool_call', { name: 'x', args: {} });
     const res = makeEnvelope(

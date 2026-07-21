@@ -422,6 +422,21 @@ export class GptRealtimeProvider implements VoiceProvider {
     }
   }
 
+  /**
+   * Hot-swap the session's instructions (a level/persona/context change) without
+   * tearing down the conversation, via `transport.updateSessionConfig`. Also
+   * updates the captured `startOpts.systemPrompt` so a later recycle/recovery
+   * reseeds from the fresh base. No-op (but still stores the base) when idle or
+   * when the transport lacks the setter — the next session start uses it.
+   */
+  updateInstructions(systemPrompt: string): void {
+    if (this.startOpts) this.startOpts = { ...this.startOpts, systemPrompt };
+    const transport = this.session?.transport;
+    if (transport?.updateSessionConfig) {
+      transport.updateSessionConfig({ instructions: systemPrompt });
+    }
+  }
+
   async interrupt(): Promise<void> {
     this.session?.interrupt();
     this.setState('listening');

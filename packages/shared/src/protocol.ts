@@ -81,6 +81,15 @@ const voiceRecyclePayload = z.object({
   reason: z.enum(['session_limit', 'persona_change', 'manual']).default('manual'),
 });
 
+/**
+ * The full voice system prompt, assembled by the daemon (behavioral base +
+ * capability summary + level-gated ambient context). Broadcast to the overlay,
+ * which uses it at session start and hot-patches a live session when it changes.
+ */
+const voiceContextPayload = z.object({
+  systemPrompt: z.string(),
+});
+
 /** Normalized output-audio amplitude (0..1) for the audio-reactive avatar. */
 const voiceAudioLevelPayload = z.object({
   level: z.number().min(0).max(1),
@@ -212,6 +221,7 @@ export const payloadSchemas = {
   'voice.state': voiceStatePayload,
   'voice.inject': voiceInjectPayload,
   'voice.recycle': voiceRecyclePayload,
+  'voice.context': voiceContextPayload,
   'voice.audio_level': voiceAudioLevelPayload,
 
   'screen.capture_request': screenCaptureRequestPayload,

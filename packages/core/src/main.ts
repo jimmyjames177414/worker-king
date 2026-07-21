@@ -17,6 +17,7 @@ import type { ToolPermissionMode } from '@workerking/shared';
 import { WsScreenContextProvider } from './screen/ScreenContextProvider.js';
 import { CapabilityManager } from './capability/CapabilityManager.js';
 import { realCapabilityQueryFn } from './capability/realCapabilityQuery.js';
+import { computeVoiceContext, type VoiceContextLevel } from './voice/VoiceContext.js';
 import { assemblePersonaAppend } from './persona/assemblePersona.js';
 import { assemblePersonaFromCard, parseCharacterCard } from './persona/CharacterCard.js';
 import { MemoryStore } from './memory/MemoryStore.js';
@@ -336,22 +337,105 @@ async function resolveBrain(
 
   const startCapabilities = () => {
     let lastManifest: CapabilityManifest | undefined;
+    let lastVoicePrompt: string | undefined;
+
+    // Short voice persona: the character card's voice line, else name+personality.
+    const voicePersona = (): string => {
+      const card = config.get('characterCard');
+      if (card) {
+        try {
+          const userName = config.get('userName') as string | undefined;
+          return assemblePersonaFromCard(parseCharacterCard(card), { userName }).voiceSystemPrompt;
+        } catch {
+          // fall through to the simple persona
+        }
+      }
+      const cfg = config.get();
+      const name = (cfg.assistantName as string | undefined)?.trim() || 'WorkerKing';
+      const personality = (cfg.personality as string | undefined)?.trim();
+      return [`You are ${name}.`, personality, 'Keep spoken replies short and natural.']
+        .filter(Boolean)
+        .join(' ');
+    };
+
+    // Compact orientation: who you're helping, when, the active project, and the
+    // repo names available for "work on X" routing.
+    const voiceOrientation = (): string => {
+      const lines: string[] = [];
+      const userName = (config.get('userName') as string | undefined)?.trim();
+      if (userName) lines.push(`You are assisting ${userName}.`);
+      lines.push(`Current date and time: ${new Date().toISOString()}.`);
+      const activeCwd = liveCwd();
+      if (activeCwd) lines.push(`Active project: ${basename(activeCwd)}.`);
+      const repos = orientation?.environment.voiceOrientation();
+      if (repos) lines.push(repos);
+      return lines.join(' ');
+    };
+
+    const voiceMemory = (): string | undefined => {
+      if (config.get('memoryEnabled') === false) return undefined;
+      const mem = memory.summary();
+      return mem ? untrusted('remembered-facts', mem) : undefined;
+    };
+
+    // Assemble the whole voice system prompt (daemon = single source of truth)
+    // and push it to the overlay, which uses it at session start and hot-patches
+    // a live session. Cheap; recompute on any input change.
+    const recomputeVoiceContext = () => {
+      const level = (config.get('voiceContextLevel') as VoiceContextLevel | undefined) ?? 'standard';
+      const systemPrompt = computeVoiceContext(level, {
+        capabilitySummary: lastManifest?.voiceSummary,
+        persona: voicePersona(),
+        orientation: voiceOrientation(),
+        sprint: orientation?.sprint?.sprintBlock(),
+        memory: voiceMemory(),
+        environment: orientation?.environment.environmentBlock(),
+      });
+      if (systemPrompt === lastVoicePrompt) return; // no change → don't spam the bus
+      lastVoicePrompt = systemPrompt;
+      server.broadcast('voice.context', { systemPrompt });
+    };
+
     const cm = new CapabilityManager({
       queryFn: realCapabilityQueryFn,
       sdkOptions: cwd ? { cwd } : {},
       broadcast: (manifest) => {
         lastManifest = manifest;
         server.broadcast('capability.updated', { manifest });
+        recomputeVoiceContext(); // the capability list feeds the voice prompt
       },
       cwd,
     });
-    // Replay the latest manifest to any client that connects after it was built,
-    // so the chat command palette always has capabilities to show.
+    // Replay the latest manifest + voice context to any client that connects after
+    // they were built (chat command palette; overlay voice prompt).
     registerDisposable({
       stop: server.onClientConnected((client) => {
         if (lastManifest) client.send('capability.updated', { manifest: lastManifest });
+        if (lastVoicePrompt) client.send('voice.context', { systemPrompt: lastVoicePrompt });
       }),
     });
+    // Rebuild the voice prompt when a voice-relevant setting changes.
+    const VOICE_KEYS = new Set([
+      'voiceContextLevel',
+      'assistantName',
+      'personality',
+      'characterCard',
+      'userName',
+      'claudeCwd',
+      'repoRoots',
+      'envNotes',
+      'memoryEnabled',
+    ]);
+    registerDisposable({ stop: config.onChange((key) => VOICE_KEYS.has(key) && recomputeVoiceContext()) });
+    // Sprint/memory drift: refresh periodically so a new session (or live patch)
+    // reflects them without waiting for a config/capability change.
+    const voiceTimer = setInterval(recomputeVoiceContext, 5 * 60_000);
+    if (typeof voiceTimer.unref === 'function') voiceTimer.unref();
+    registerDisposable({ stop: () => clearInterval(voiceTimer) });
+    // Seed an initial prompt now (no capability summary yet) so a session that
+    // starts before the manifest builds still gets persona + orientation.
+    recomputeVoiceContext();
+
     registerDisposable(cm);
     cm.start().catch((e) => log.warn('capability manifest build failed', { error: String(e) }));
 

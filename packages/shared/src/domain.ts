@@ -115,6 +115,8 @@ export const capabilityManifestEntrySchema = z.object({
   kind: capabilityKindSchema,
   name: z.string(),
   description: z.string(),
+  /** Usage/argument hint for commands (e.g. "<pr-url>"), if the command declares one. */
+  argumentHint: z.string().optional(),
   /** Where the capability was discovered. */
   source: z.enum(['user', 'project', 'builtin']),
   /** Filesystem path for skills/commands (the SKILL.md), if applicable. */
@@ -296,6 +298,15 @@ export const workerKingConfigSchema = z
     activityStreamEnabled: z.boolean().optional(),
     /** Include the model's reasoning/thinking in the activity feed; on by default. */
     activityShowThinking: z.boolean().optional(),
+    /**
+     * How much ambient context the daemon feeds the thin voice model:
+     *  - thin: capability list only
+     *  - standard (default): + persona + compact orientation (name, time, project, repo names)
+     *  - rich: + sprint & remembered facts
+     *  - maximal: + full environment listing
+     * Screen content is never included at any level.
+     */
+    voiceContextLevel: z.enum(['thin', 'standard', 'rich', 'maximal']).optional(),
     /** Global hotkey to explain/act on the current clipboard selection. */
     explainHotkey: z.string(),
     /** How the Claude Code toolset is gated; 'gated' by default (fail-closed). */
@@ -364,6 +375,7 @@ export const DEFAULT_CONFIG: WorkerKingConfig = {
   proactiveEnabled: false,
   activityStreamEnabled: true,
   activityShowThinking: true,
+  voiceContextLevel: 'standard',
   explainHotkey: 'Control+Shift+E',
   toolPermissionMode: 'gated',
   repoRoots: ['C:\\_repos', '\\\\wsl.localhost\\Ubuntu-22.04\\home\\jamesamiller\\repos'],

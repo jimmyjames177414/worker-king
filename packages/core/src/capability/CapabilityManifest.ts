@@ -27,8 +27,8 @@ export type CapabilityQueryFn = (params: {
   options?: Options;
 }) => CapabilityQueryHandle;
 
-/** Fraction of the (rough) voice context to spend on the capability summary. */
-const VOICE_SUMMARY_MAX_ITEMS = 12;
+/** Char budget for the whole capability summary — keeps the voice prompt frugal. */
+const VOICE_SUMMARY_MAX_CHARS = 1500;
 
 function mapMcpStatus(status: string): 'connected' | 'error' | 'pending' {
   if (status === 'connected') return 'connected';
@@ -50,6 +50,7 @@ export function mapToEntries(
       kind: 'command',
       name: c.name,
       description,
+      ...(c.argumentHint ? { argumentHint: c.argumentHint } : {}),
       source: 'user',
       routingHints: deriveRoutingHints(c.name, description),
     });
@@ -78,42 +79,52 @@ export function mapToEntries(
   return entries;
 }
 
+/** One "- name <args> — description" bullet, trimmed of an empty description. */
+function entryLine(e: CapabilityManifestEntry): string {
+  const head = e.argumentHint ? `${e.name} ${e.argumentHint}` : e.name;
+  const desc = e.description.replace(/\s+/g, ' ').trim();
+  return desc ? `- ${head} — ${desc}` : `- ${head}`;
+}
+
 /**
- * Render a compact, budget-capped summary for the thin voice model. Groups by
- * category, caps the item list, and tells the model to ask for the full set.
+ * Render a compact, char-budgeted summary for the thin voice model. Unlike the
+ * old name-only list, each item carries its one-line description (and commands
+ * their argument hint) so the model can route accurately. Grouped by category;
+ * overflow past the budget collapses to a "(+N more)" marker per group.
  */
 export function renderVoiceSummary(entries: CapabilityManifestEntry[]): string {
   const skills = entries.filter((e) => e.kind === 'skill' || e.kind === 'command');
   const agents = entries.filter((e) => e.kind === 'agent');
-  const mcp = entries.filter((e) => e.kind === 'mcp_server' || e.kind === 'mcp_tool');
+  const mcp = entries.filter(
+    (e) => (e.kind === 'mcp_server' || e.kind === 'mcp_tool') && e.status === 'connected',
+  );
 
-  const lines: string[] = [];
-  if (skills.length) {
-    const shown = skills
-      .slice(0, VOICE_SUMMARY_MAX_ITEMS)
-      .map((s) => s.name)
-      .join(', ');
-    const more =
-      skills.length > VOICE_SUMMARY_MAX_ITEMS
-        ? ` (+${skills.length - VOICE_SUMMARY_MAX_ITEMS} more)`
-        : '';
-    lines.push(`Skills/commands you can run: ${shown}${more}.`);
-  }
-  if (agents.length) {
-    lines.push(
-      `Agents available: ${agents
-        .slice(0, 8)
-        .map((a) => a.name)
-        .join(', ')}.`,
-    );
-  }
-  if (mcp.length) {
-    const connected = mcp.filter((m) => m.status === 'connected').map((m) => m.name);
-    if (connected.length) lines.push(`Connected tools/services: ${connected.join(', ')}.`);
-  }
-  if (!lines.length) return 'No custom skills or tools are configured yet.';
-  lines.push('Ask me to list everything if you want the full set.');
-  return lines.join(' ');
+  let budget = VOICE_SUMMARY_MAX_CHARS;
+  const section = (title: string, group: CapabilityManifestEntry[]): string | undefined => {
+    if (!group.length) return undefined;
+    const rows: string[] = [];
+    let shown = 0;
+    for (const e of group) {
+      const line = entryLine(e);
+      if (budget - line.length < 0) break;
+      rows.push(line);
+      budget -= line.length + 1;
+      shown++;
+    }
+    const more = group.length - shown;
+    const header = more > 0 ? `${title} (+${more} more):` : `${title}:`;
+    return rows.length ? `${header}\n${rows.join('\n')}` : `${header} (+${more} more)`;
+  };
+
+  const parts = [
+    section('Skills/commands you can run', skills),
+    section('Agents you can delegate to', agents),
+    section('Connected tools/services', mcp),
+  ].filter((s): s is string => Boolean(s));
+
+  if (!parts.length) return 'No custom skills or tools are configured yet.';
+  parts.push('Ask me to list everything if you want the full set.');
+  return parts.join('\n\n');
 }
 
 /** A never-ending user-message stream so the session stays open while we read. */
