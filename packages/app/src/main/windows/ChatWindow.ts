@@ -3,15 +3,21 @@ import { join } from 'node:path';
 import { loadRenderer, hardenNavigation } from './OverlayWindow.js';
 
 /**
- * The full chat window: a normal resizable window, created hidden and toggled
- * from the avatar, tray, or global shortcut. Holds the transcript, task list,
- * and (later) settings + character-card import.
+ * The full chat window: a frameless, resizable desktop shell, created hidden and
+ * toggled from the avatar, tray, or global shortcut. Holds the transcript, the
+ * command rail's six views, and settings + character-card import.
+ *
+ * Frameless means the renderer draws its own title bar (renderer/chat/TitleBar.ts)
+ * and drives minimize/maximize/close over the `wk:window-*` IPC channels.
  */
 export function createChatWindow(): BrowserWindow {
   const win = new BrowserWindow({
-    width: 480,
-    height: 640,
+    width: 980,
+    height: 700,
+    minWidth: 760,
+    minHeight: 520,
     show: false,
+    frame: false,
     title: 'WorkerKing',
     webPreferences: {
       preload: join(__dirname, '../preload/chat.js'),
@@ -23,13 +29,19 @@ export function createChatWindow(): BrowserWindow {
     },
   });
 
-  // Hide instead of destroy on close so state persists.
+  // Hide instead of destroy on close so state persists. This also catches the
+  // custom title bar's close button, which calls win.close() over IPC.
   win.on('close', (e) => {
     if (!(win as BrowserWindow & { _reallyClose?: boolean })._reallyClose) {
       e.preventDefault();
       win.hide();
     }
   });
+
+  // Keep the renderer's maximize/restore icon in sync with the real window state.
+  const sendMaximized = (maximized: boolean) => win.webContents.send('wk:maximized', maximized);
+  win.on('maximize', () => sendMaximized(true));
+  win.on('unmaximize', () => sendMaximized(false));
 
   hardenNavigation(win);
   loadRenderer(win, 'chat');

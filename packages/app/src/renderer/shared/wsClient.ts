@@ -39,6 +39,7 @@ export class WsClient {
   private wsListeners?: AbortController;
   private readonly handlers = new Map<WsMessageKind, Set<Handler>>();
   private readonly anyHandlers = new Set<Handler>();
+  private readonly statusHandlers = new Set<(connected: boolean) => void>();
   private reconnectDelay = 500;
   private reconnectTimer?: ReturnType<typeof setTimeout>;
   private closedByUser = false;
@@ -105,6 +106,7 @@ export class WsClient {
           this.ready = true;
           this.reconnectDelay = 500;
           this.flush();
+          this.emitStatus(true);
         }
         for (const h of this.handlers.get(env.kind) ?? []) h(env);
         for (const h of this.anyHandlers) h(env);
@@ -117,6 +119,7 @@ export class WsClient {
       () => {
         if (this.ws !== ws) return; // a newer socket took over
         this.ready = false;
+        this.emitStatus(false);
         if (!this.closedByUser) this.scheduleReconnect();
       },
       { signal: listeners.signal },
@@ -204,6 +207,20 @@ export class WsClient {
   onAny(handler: Handler): () => void {
     this.anyHandlers.add(handler);
     return () => this.anyHandlers.delete(handler);
+  }
+
+  /**
+   * Observe connection state: `true` once the daemon's `welcome` lands, `false`
+   * when the socket closes. Lets the UI react to a real disconnect instead of
+   * inferring one from silence.
+   */
+  onStatusChange(cb: (connected: boolean) => void): () => void {
+    this.statusHandlers.add(cb);
+    return () => this.statusHandlers.delete(cb);
+  }
+
+  private emitStatus(connected: boolean): void {
+    for (const cb of this.statusHandlers) cb(connected);
   }
 
   close(): void {

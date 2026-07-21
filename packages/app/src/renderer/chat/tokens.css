@@ -1,0 +1,173 @@
+/*
+ * Design tokens for the chat window.
+ *
+ * Dark is the source palette (lifted from the WorkerKing design mock); light is
+ * its counterpart at equivalent contrast. `applyTheme()` stamps `data-theme` on
+ * <html>, so switching themes is purely a custom-property swap — no JS in here.
+ * Dark doubles as the un-stamped default so the first paint is never unstyled.
+ */
+
+:root {
+  --wk-font: 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif;
+  --wk-mono: 'Cascadia Code', Consolas, ui-monospace, monospace;
+}
+
+:root,
+:root[data-theme='dark'] {
+  --wk-app-bg: linear-gradient(180deg, #1b1a20, #171619);
+  --wk-chrome: rgba(10, 10, 13, 0.55);
+  --wk-rail: rgba(9, 9, 12, 0.5);
+  --wk-surface: #26252c;
+  --wk-surface-input: #232228;
+  --wk-surface-soft: rgba(255, 255, 255, 0.035);
+  --wk-border: rgba(255, 255, 255, 0.06);
+  --wk-border-soft: rgba(255, 255, 255, 0.05);
+  --wk-border-strong: rgba(255, 255, 255, 0.1);
+  --wk-hover: rgba(255, 255, 255, 0.05);
+  --wk-hover-strong: rgba(255, 255, 255, 0.09);
+  --wk-pill: rgba(255, 255, 255, 0.1);
+  --wk-rail-line: rgba(255, 255, 255, 0.08);
+  --wk-node-ring: #1a1920;
+
+  --wk-text: #e8e8ec;
+  --wk-text-strong: #f0eff4;
+  --wk-text-body: #dcdbe2;
+  --wk-text-soft: #b7b6bf;
+  --wk-text-sub: #8a8993;
+  --wk-text-muted: #9a99a3;
+  --wk-text-dim: #6f6e78;
+  --wk-text-faint: #565560;
+
+  --wk-accent: #3b82f6;
+  --wk-accent-deep: #2563eb;
+  --wk-accent-grad: linear-gradient(135deg, #3b82f6, #2563eb);
+  --wk-accent-mark: linear-gradient(135deg, #4f8bf0, #2f6fd6);
+  --wk-accent-glow: rgba(59, 130, 246, 0.4);
+  --wk-accent-soft: rgba(59, 130, 246, 0.13);
+  --wk-accent-chip: rgba(59, 130, 246, 0.16);
+  --wk-accent-text: #8fb8f5;
+  --wk-accent-link: #7aa8ee;
+
+  --wk-ok: #3ddc84;
+  --wk-ok-text: #7fe0a6;
+  --wk-ok-soft: rgba(61, 220, 132, 0.14);
+  --wk-ok-border: rgba(61, 220, 132, 0.28);
+
+  --wk-danger: #c42b1c;
+  --wk-danger-text: #f0a89f;
+  --wk-danger-soft: rgba(196, 43, 28, 0.16);
+  --wk-danger-border: rgba(196, 43, 28, 0.36);
+  --wk-danger-head: #c4756b;
+  --wk-danger-body: #b98d87;
+
+  --wk-agent: #937cf0;
+  --wk-agent-text: #c3b8ff;
+  --wk-agent-soft: rgba(147, 124, 240, 0.16);
+
+  --wk-code: #8fd3ff;
+  --wk-code-bg: rgba(143, 211, 255, 0.1);
+  --wk-inline-bg: rgba(255, 255, 255, 0.07);
+  --wk-pre-bg: rgba(0, 0, 0, 0.28);
+
+  --wk-shadow: rgba(0, 0, 0, 0.5);
+  --wk-shadow-pop: rgba(0, 0, 0, 0.6);
+  --wk-scroll: rgba(255, 255, 255, 0.12);
+  --wk-scroll-hover: rgba(255, 255, 255, 0.2);
+}
+
+:root[data-theme='light'] {
+  --wk-app-bg: linear-gradient(180deg, #f7f7fa, #eeeef3);
+  --wk-chrome: rgba(255, 255, 255, 0.72);
+  --wk-rail: rgba(255, 255, 255, 0.62);
+  --wk-surface: #ffffff;
+  --wk-surface-input: #ffffff;
+  --wk-surface-soft: rgba(0, 0, 0, 0.03);
+  --wk-border: rgba(0, 0, 0, 0.09);
+  --wk-border-soft: rgba(0, 0, 0, 0.07);
+  --wk-border-strong: rgba(0, 0, 0, 0.16);
+  --wk-hover: rgba(0, 0, 0, 0.045);
+  --wk-hover-strong: rgba(0, 0, 0, 0.08);
+  --wk-pill: rgba(0, 0, 0, 0.08);
+  --wk-rail-line: rgba(0, 0, 0, 0.1);
+  --wk-node-ring: #f4f4f7;
+
+  --wk-text: #1c1b21;
+  --wk-text-strong: #0f0e13;
+  --wk-text-body: #2b2a32;
+  --wk-text-soft: #4a4954;
+  --wk-text-sub: #6b6a75;
+  --wk-text-muted: #5c5b66;
+  --wk-text-dim: #7d7c87;
+  --wk-text-faint: #91909b;
+
+  --wk-accent: #2563eb;
+  --wk-accent-deep: #1d4ed8;
+  --wk-accent-grad: linear-gradient(135deg, #3b82f6, #2563eb);
+  --wk-accent-mark: linear-gradient(135deg, #4f8bf0, #2f6fd6);
+  --wk-accent-glow: rgba(37, 99, 235, 0.28);
+  --wk-accent-soft: rgba(37, 99, 235, 0.1);
+  --wk-accent-chip: rgba(37, 99, 235, 0.12);
+  --wk-accent-text: #1d4ed8;
+  --wk-accent-link: #1d4ed8;
+
+  --wk-ok: #12a150;
+  --wk-ok-text: #0d7a3c;
+  --wk-ok-soft: rgba(18, 161, 80, 0.13);
+  --wk-ok-border: rgba(18, 161, 80, 0.3);
+
+  --wk-danger: #c42b1c;
+  --wk-danger-text: #a12318;
+  --wk-danger-soft: rgba(196, 43, 28, 0.1);
+  --wk-danger-border: rgba(196, 43, 28, 0.3);
+  --wk-danger-head: #a12318;
+  --wk-danger-body: #8a4b43;
+
+  --wk-agent: #6d4fd0;
+  --wk-agent-text: #533bb0;
+  --wk-agent-soft: rgba(109, 79, 208, 0.12);
+
+  --wk-code: #0b6ea8;
+  --wk-code-bg: rgba(11, 110, 168, 0.08);
+  --wk-inline-bg: rgba(0, 0, 0, 0.05);
+  --wk-pre-bg: rgba(0, 0, 0, 0.05);
+
+  --wk-shadow: rgba(0, 0, 0, 0.14);
+  --wk-shadow-pop: rgba(0, 0, 0, 0.18);
+  --wk-scroll: rgba(0, 0, 0, 0.16);
+  --wk-scroll-hover: rgba(0, 0, 0, 0.26);
+}
+
+/* Live dots (status pill, rail, watches). */
+@keyframes wkpulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.45;
+    transform: scale(0.82);
+  }
+}
+
+/* Activity timeline rows entering the feed. */
+@keyframes wkfeed {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Indeterminate task bar — the daemon reports no percentage, so it sweeps. */
+@keyframes wkbar {
+  from {
+    transform: translateX(-110%);
+  }
+  to {
+    transform: translateX(360%);
+  }
+}

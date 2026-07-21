@@ -23,6 +23,21 @@ const api = {
   onReconnect: (cb: () => void): void => {
     ipcRenderer.on('wk:reconnect', () => cb());
   },
+  // Window controls — the chat window is frameless, so its title bar is ours.
+  minimizeWindow: (): void => {
+    ipcRenderer.send('wk:window-minimize');
+  },
+  toggleMaximizeWindow: (): void => {
+    ipcRenderer.send('wk:window-maximize-toggle');
+  },
+  /** Hides the window (main intercepts close) rather than destroying it. */
+  closeWindow: (): void => {
+    ipcRenderer.send('wk:window-close');
+  },
+  /** Keeps the title bar's maximize/restore icon in sync with the real state. */
+  onMaximizeChange: (cb: (maximized: boolean) => void): void => {
+    ipcRenderer.on('wk:maximized', (_e, maximized: boolean) => cb(maximized));
+  },
 };
 
 contextBridge.exposeInMainWorld('workerking', api);

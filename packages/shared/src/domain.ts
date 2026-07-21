@@ -298,6 +298,8 @@ export const workerKingConfigSchema = z
     activityStreamEnabled: z.boolean().optional(),
     /** Include the model's reasoning/thinking in the activity feed; on by default. */
     activityShowThinking: z.boolean().optional(),
+    /** Auto-open the activity panel while CLI work is running; on by default. */
+    activityAutoOpen: z.boolean().optional(),
     /**
      * How much ambient context the daemon feeds the thin voice model:
      *  - thin: capability list only
@@ -375,10 +377,25 @@ export const DEFAULT_CONFIG: WorkerKingConfig = {
   proactiveEnabled: false,
   activityStreamEnabled: true,
   activityShowThinking: true,
+  activityAutoOpen: true,
   voiceContextLevel: 'standard',
   explainHotkey: 'Control+Shift+E',
   toolPermissionMode: 'gated',
   repoRoots: ['C:\\_repos', '\\\\wsl.localhost\\Ubuntu-22.04\\home\\jamesamiller\\repos'],
+  // How to LAUNCH the known local apps. Without this the brain can see the repos
+  // (repoRoots listing) but has to go read each one's CLAUDE.md to guess a start
+  // command — so it either stalls or invents one. Keep in sync with the repos.
+  envNotes:
+    'Launching known local apps. ' +
+    'Sprint/standup dashboard (serves 127.0.0.1:5757, lives in WSL at ~/repos/sprint): ' +
+    'run `wsl.exe -d Ubuntu-22.04 -- bash -lc "cd ~/repos/sprint && ./runbook/debug.sh standup"`. ' +
+    'That start is idempotent (no-op if 5757 is already healthy) and backgrounds itself; ' +
+    'stop with ./runbook/stop-debug.sh. ' +
+    'LocalTranscriber (Windows, C:\\_repos\\LocalTranscriber): GUI is ' +
+    '`powershell -File C:\\_repos\\LocalTranscriber\\scripts\\run-app.ps1`. For transcription ' +
+    'itself prefer the local-transcriber MCP tools (start_transcription, tail_transcript, …) ' +
+    'when they are available — no shell needed. ' +
+    'General rule: start long-running servers detached/backgrounded, never block a turn on one.',
   localTranscriberEnabled: false,
   localTranscriberPath: 'C:/_repos/LocalTranscriber/src/LocalTranscriber.Mcp',
 };

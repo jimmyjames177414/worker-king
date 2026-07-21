@@ -34,7 +34,7 @@ export class CommandPalette {
   private readonly el: HTMLElement;
   private items: CapabilityManifestEntry[] = [];
   private active = 0;
-  private open = false;
+  private isOpen = false;
 
   constructor(
     private readonly input: HTMLInputElement,
@@ -51,6 +51,17 @@ export class CommandPalette {
     this.input.addEventListener('blur', () => setTimeout(() => this.hide(), 120));
   }
 
+  /**
+   * Open the picker without typing "/" (the composer's Ask button). Shows the
+   * unfiltered capability list; typing then narrows it as usual.
+   */
+  open(): void {
+    this.items = paletteMatches('', this.getEntries());
+    this.active = 0;
+    this.render();
+    this.input.focus();
+  }
+
   private refresh(): void {
     const query = parsePaletteQuery(this.input.value);
     if (query === null) return this.hide();
@@ -61,7 +72,7 @@ export class CommandPalette {
 
   private render(): void {
     if (!this.items.length) return this.hide();
-    this.open = true;
+    this.isOpen = true;
     this.el.style.display = 'block';
     this.el.replaceChildren();
     this.items.forEach((entry, i) => {
@@ -86,7 +97,7 @@ export class CommandPalette {
   }
 
   private onKeydown(e: KeyboardEvent): void {
-    if (!this.open) return;
+    if (!this.isOpen) return;
     if (e.key === 'ArrowDown') {
       e.preventDefault();
       this.active = (this.active + 1) % this.items.length;
@@ -111,7 +122,7 @@ export class CommandPalette {
   }
 
   private hide(): void {
-    this.open = false;
+    this.isOpen = false;
     this.el.style.display = 'none';
   }
 }

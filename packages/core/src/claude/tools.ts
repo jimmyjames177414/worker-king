@@ -350,7 +350,9 @@ export function buildSprintStateTool(): SdkMcpToolDefinition<Record<string, neve
       } catch {
         return errorResult(
           'Sprint dashboard is not running (http://127.0.0.1:5757 unreachable). ' +
-            'Tell the user to start it with `pnpm daemon` in the sprint repo.',
+            'It lives in WSL; start it with `./runbook/debug.sh standup` from ~/repos/sprint ' +
+            '(from Windows: `wsl.exe -d Ubuntu-22.04 -- bash -lc "cd ~/repos/sprint && ' +
+            './runbook/debug.sh standup"`). That start is idempotent and backgrounds itself.',
         );
       }
     },

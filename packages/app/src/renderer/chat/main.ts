@@ -1,45 +1,40 @@
+import './tokens.css';
+import './app.css';
+
 import { connectToDaemon, type WsClient } from '../shared/wsClient.js';
 import { Settings, type SettingsBridge } from './Settings.js';
-import { renderMarkdown } from './markdown.js';
-import { decorateAssistantBubble } from './copy.js';
 import { applyTheme, normalizeThemePref } from '../shared/theme.js';
 import { CommandPalette } from './palette.js';
 import { ActivityFeed } from './ActivityFeed.js';
+import { Shell, type ViewId } from './Shell.js';
+import { TitleBar, type WindowControls } from './TitleBar.js';
+import { MessageView, type Who } from './MessageView.js';
+import { HistoryView } from './views/HistoryView.js';
+import { WatchesView } from './views/WatchesView.js';
+import { TasksView } from './views/TasksView.js';
+import { dayStamp, sameDay } from './relTime.js';
 import type { CapabilityManifestEntry } from '@workerking/shared';
 
 /**
- * Chat renderer entry. Text chat plus a task-list panel (delegated work streamed
- * over task.* events), Markdown-rendered assistant replies, and a transcript that
- * survives app restarts via localStorage.
+ * Chat renderer entry.
+ *
+ * The window is a desktop shell: a custom title bar, a command rail, and six
+ * views the rail switches between. This file owns the wiring — WS handlers, the
+ * transcript (persisted to localStorage), and the router callbacks — while the
+ * views themselves live in ./views and ./Shell.
  */
-interface Els {
-  log: HTMLElement;
-  input: HTMLInputElement;
-  form: HTMLFormElement;
-  status: HTMLElement;
-  tasksList: HTMLElement;
-  tasksCount: HTMLElement;
-  activityList: HTMLElement;
-  activityCount: HTMLElement;
-}
 
-function els(): Els {
-  return {
-    log: document.getElementById('log')!,
-    input: document.getElementById('input') as HTMLInputElement,
-    form: document.getElementById('composer') as HTMLFormElement,
-    status: document.getElementById('status')!,
-    tasksList: document.getElementById('tasks-list')!,
-    tasksCount: document.getElementById('tasks-count')!,
-    activityList: document.getElementById('activity-list')!,
-    activityCount: document.getElementById('activity-count')!,
+/** Everything the chat preload bridge exposes. */
+type ChatBridge = SettingsBridge &
+  WindowControls & {
+    onReconnect(cb: () => void): void;
+    showWindow?(): void;
   };
-}
 
 // --- Transcript persistence -------------------------------------------------
 const TRANSCRIPT_KEY = 'workerking.transcript.v1';
 const MAX_PERSISTED = 200;
-type Msg = { who: 'you' | 'wk'; text: string; spoken?: boolean };
+type Msg = { who: Who; text: string; spoken?: boolean; ts?: number };
 
 function loadTranscript(): Msg[] {
   try {
@@ -59,135 +54,164 @@ function saveTranscript(msgs: Msg[]): void {
   }
 }
 
-function renderInto(row: HTMLElement, who: 'you' | 'wk', text: string): void {
-  // The user's own text stays literal; assistant replies render Markdown and get
-  // copy affordances (message + per-code-block).
-  if (who === 'wk') {
-    row.innerHTML = renderMarkdown(text);
-    decorateAssistantBubble(row, text);
-  } else {
-    row.textContent = text;
-  }
-}
-
-function appendBubble(log: HTMLElement, who: 'you' | 'wk'): HTMLElement {
-  const row = document.createElement('div');
-  row.className = `bubble bubble--${who}`;
-  log.appendChild(row);
-  log.scrollTop = log.scrollHeight;
-  return row;
-}
-
-// --- Task list --------------------------------------------------------------
-interface TaskView {
-  id: string;
-  prompt: string;
-  state: string;
-  latest?: string;
-  result?: string;
-  error?: string;
-}
-
-class TaskList {
-  private readonly tasks = new Map<string, TaskView>();
-  private readonly rows = new Map<string, HTMLElement>();
-
-  constructor(
-    private readonly listEl: HTMLElement,
-    private readonly countEl: HTMLElement,
-  ) {}
-
-  upsert(view: TaskView): void {
-    this.tasks.set(view.id, { ...this.tasks.get(view.id), ...view });
-    this.renderRow(view.id);
-    this.renderCount();
-  }
-
-  progress(id: string, text: string): void {
-    const t = this.tasks.get(id);
-    if (!t) return;
-    t.latest = text;
-    this.renderRow(id);
-  }
-
-  private renderRow(id: string): void {
-    const t = this.tasks.get(id);
-    if (!t) return;
-    let row = this.rows.get(id);
-    if (!row) {
-      row = document.createElement('div');
-      row.className = 'task';
-      this.listEl.prepend(row);
-      this.rows.set(id, row);
-    }
-    const detail = t.error ?? t.result ?? t.latest ?? '';
-    row.className = `task task--${t.state}`;
-    row.innerHTML = '';
-    const head = document.createElement('div');
-    head.className = 'task__head';
-    const badge = document.createElement('span');
-    badge.className = 'task__badge';
-    badge.textContent = t.state;
-    const title = document.createElement('span');
-    title.className = 'task__title';
-    title.textContent = t.prompt;
-    head.append(badge, title);
-    row.appendChild(head);
-    if (detail) {
-      const d = document.createElement('div');
-      d.className = 'task__detail';
-      d.textContent = detail;
-      row.appendChild(d);
-    }
-  }
-
-  private renderCount(): void {
-    const active = [...this.tasks.values()].filter(
-      (t) => t.state === 'running' || t.state === 'queued' || t.state === 'awaiting_permission',
-    ).length;
-    this.countEl.textContent = active ? String(active) : '';
-    this.countEl.classList.toggle('has', active > 0);
-  }
+/** An assistant turn still streaming in, keyed by messageId. */
+interface Turn {
+  view: MessageView;
+  raw: string;
+  lastUpdate: number;
+  startedAt: number;
 }
 
 async function main(): Promise<void> {
-  const { log, input, form, status, tasksList, tasksCount, activityList, activityCount } = els();
+  const bridge = (window as unknown as { workerking: ChatBridge }).workerking;
+  const shell = new Shell();
+  new TitleBar(bridge);
+
+  const log = document.getElementById('log')!;
+  const scroller = document.getElementById('chat-scroll')!;
+  const input = document.getElementById('input') as HTMLInputElement;
+  const form = document.getElementById('composer') as HTMLFormElement;
+  const scrollToEnd = () => {
+    scroller.scrollTop = scroller.scrollHeight;
+  };
+
   const transcript = loadTranscript();
-  const taskList = new TaskList(tasksList, tasksCount);
-  const activityFeed = new ActivityFeed(activityList, activityCount);
+  let lastUserText = '';
+  /** Day of the last rendered message, so separators only appear on a change. */
+  let lastDayTs: number | undefined;
 
-  // Restore prior transcript so history survives an app restart.
-  for (const m of transcript) addMessage(m.who, m.text, m.spoken);
-  log.scrollTop = log.scrollHeight;
+  const retryLast = () => {
+    if (lastUserText) submit(lastUserText);
+  };
 
-  function addMessage(who: 'you' | 'wk', text: string, spoken = false): HTMLElement {
-    const row = appendBubble(log, who);
-    if (spoken) row.classList.add('bubble--spoken');
-    renderInto(row, who, text);
-    return row;
+  function addDaySeparator(ts?: number): void {
+    if (ts === undefined) return; // legacy transcript entries carry no timestamp
+    if (lastDayTs !== undefined && sameDay(lastDayTs, ts)) return;
+    const sep = document.createElement('div');
+    sep.className = 'msg-day';
+    sep.textContent = dayStamp(ts);
+    log.appendChild(sep);
+    lastDayTs = ts;
   }
 
-  const record = (who: 'you' | 'wk', text: string, spoken = false) => {
-    transcript.push({ who, text, spoken });
+  /** Append an empty row and return its view (assistant rows get Retry). */
+  function newRow(who: Who, opts: { spoken?: boolean; ts?: number } = {}): MessageView {
+    addDaySeparator(opts.ts);
+    const view = new MessageView(who, {
+      ...(opts.spoken !== undefined ? { spoken: opts.spoken } : {}),
+      ...(who === 'wk' ? { onRetry: retryLast } : {}),
+    });
+    log.appendChild(view.root);
+    scrollToEnd();
+    return view;
+  }
+
+  function addMessage(who: Who, text: string, opts: { spoken?: boolean; ts?: number } = {}): void {
+    newRow(who, opts).render(text);
+  }
+
+  const record = (who: Who, text: string, spoken = false) => {
+    transcript.push({ who, text, spoken, ts: Date.now() });
     saveTranscript(transcript);
   };
 
   const clearConversation = () => {
-    log.innerHTML = '';
+    log.replaceChildren();
     transcript.length = 0;
+    lastDayTs = undefined;
     saveTranscript(transcript);
   };
+
+  // Restore prior transcript so history survives an app restart.
+  for (const m of transcript) {
+    addMessage(m.who, m.text, {
+      ...(m.spoken !== undefined ? { spoken: m.spoken } : {}),
+      ...(m.ts !== undefined ? { ts: m.ts } : {}),
+    });
+  }
+  scrollToEnd();
+
+  // --- Views ---------------------------------------------------------------
+  const tasksView = new TasksView(
+    document.getElementById('tasks-list')!,
+    document.getElementById('tasks-count'),
+    { onActiveCountChange: (n) => shell.setBadge('tasks', n) },
+  );
+
+  // Activity auto-switch: jump to the feed when CLI work starts and jump back
+  // when everything settles — but only while the user hasn't taken navigation
+  // over themselves (any manual click releases the auto-drive, see onNavigate).
+  let autoOpenEnabled = true;
+  let autoReturnTo: ViewId | null = null;
+  const activityFeed = new ActivityFeed(
+    document.getElementById('activity-list')!,
+    document.getElementById('activity-count')!,
+    (busy) => {
+      shell.setLive('activity', busy);
+      if (busy) {
+        if (autoOpenEnabled && shell.view !== 'activity') {
+          autoReturnTo = shell.view;
+          shell.setView('activity', 'auto');
+        }
+      } else if (autoReturnTo) {
+        shell.setView(autoReturnTo, 'auto');
+        autoReturnTo = null;
+      }
+    },
+  );
 
   let client: WsClient;
   try {
     client = await connectToDaemon();
   } catch (err) {
-    status.textContent = `disconnected: ${String(err)}`;
+    shell.setConnected(false, 'Disconnected');
+    shell.setNotice(String(err));
     return;
   }
 
+  const settings = new Settings(
+    document.getElementById('settings-body')!,
+    bridge,
+    clearConversation,
+  );
+
+  const historyView = new HistoryView(
+    document.querySelector<HTMLElement>('[data-view="history"]')!,
+    {
+      onOpen: (conversationId) => client.send('history.load', { conversationId }),
+      onNew: () => {
+        client.send('history.new', {});
+        clearConversation();
+        shell.setView('chat');
+      },
+    },
+  );
+
+  const watchesView = new WatchesView(
+    document.querySelector<HTMLElement>('[data-view="watches"]')!,
+    {
+      onAdd: (prompt, cron) => client.send('watches.add', { prompt, cron }),
+      onRemove: (id) => client.send('watches.remove', { id }),
+      onCountChange: (n) => shell.setBadge('watches', n),
+    },
+  );
+
+  // Entering a view is what fetches its data; a manual click also hands
+  // navigation back to the user (the activity auto-switch stops driving it).
+  shell.onNavigate((id, source) => {
+    if (source === 'user') autoReturnTo = null;
+    if (id === 'history') client.send('history.list', {});
+    if (id === 'watches') client.send('watches.list', {});
+    if (id === 'settings') void settings.render();
+  });
+
+  shell.onReconnect(() => client.reconnect());
+  bridge.onReconnect(() => client.reconnect());
+
   client.on('welcome', (env) => {
-    status.textContent = `connected (daemon ${env.payload.daemonVersion}, host ${env.payload.host})`;
+    shell.setConnected(true);
+    shell.setNotice('');
+    shell.setDaemonInfo(env.payload.daemonVersion, env.payload.host);
   });
 
   // N1: destructive-tool confirmation. The daemon asks before running a gated
@@ -197,26 +221,21 @@ async function main(): Promise<void> {
     const { tool, summary } = env.payload;
     // Voice-first usage: this window may never have been opened. Surface it
     // first — a confirm dialog in a hidden window silently times out to deny.
-    (window as unknown as { workerking?: { showWindow?: () => void } }).workerking?.showWindow?.();
+    bridge.showWindow?.();
     const approved = window.confirm(
       `WorkerKing wants to ${summary}\n\n[${tool}] Allow this action?`,
     );
     client.send('tool.confirm_response', { approved }, { replyTo: env.id });
   });
 
-  // Settings panel and panel toggles.
-  const bridge = (
-    window as unknown as {
-      workerking: SettingsBridge & { onReconnect(cb: () => void): void };
-    }
-  ).workerking;
-  bridge.onReconnect(() => client.reconnect());
-  wirePanels();
-
   // Theme: apply the persisted preference now, and live-update when it changes.
-  void bridge.getConfig().then((cfg) => applyTheme(normalizeThemePref(cfg['theme'])));
+  void bridge.getConfig().then((cfg) => {
+    applyTheme(normalizeThemePref(cfg['theme']));
+    autoOpenEnabled = cfg['activityAutoOpen'] !== false; // default on
+  });
   client.on('config.changed', (env) => {
     if (env.payload.key === 'theme') applyTheme(normalizeThemePref(env.payload.value));
+    if (env.payload.key === 'activityAutoOpen') autoOpenEnabled = env.payload.value !== false;
   });
 
   // Command palette: cache the capability manifest, filter it on "/".
@@ -224,80 +243,114 @@ async function main(): Promise<void> {
   client.on('capability.updated', (env) => {
     capabilities = env.payload.manifest.entries;
   });
-  new CommandPalette(input, form, () => capabilities);
+  const palette = new CommandPalette(input, form, () => capabilities);
+  const ask = document.getElementById('ask');
+  ask?.addEventListener('mousedown', (e) => e.preventDefault()); // keep focus on the input
+  ask?.addEventListener('click', () => palette.open());
 
-  // Track the in-flight assistant bubble by messageId. Also tracks the last
-  // update time so a stalled stream (daemon died mid-turn, chat.assistant_done
-  // never arrives) can be swept instead of leaking the map entry + bubble forever.
-  const bubbles = new Map<string, { el: HTMLElement; lastUpdate: number }>();
-  const STALE_BUBBLE_MS = 60_000;
+  // --- In-flight assistant turns ------------------------------------------
+  // Tracked by messageId, with a last-update stamp so a stalled stream (daemon
+  // died mid-turn, chat.assistant_done never arrives) is swept instead of
+  // leaking the map entry + row forever.
+  const turns = new Map<string, Turn>();
+  /** Submit time per messageId, so a completed turn can report its duration. */
+  const startedAt = new Map<string, number>();
+  const STALE_TURN_MS = 60_000;
 
-  const finalizeStaleBubbles = () => {
-    const now = Date.now();
-    for (const [id, entry] of bubbles) {
-      if (now - entry.lastUpdate < STALE_BUBBLE_MS) continue;
-      renderInto(entry.el, 'wk', (entry.el.dataset['raw'] ?? '') + '\n\n_(connection lost)_');
-      bubbles.delete(id);
+  function ensureTurn(id: string): Turn {
+    let turn = turns.get(id);
+    if (!turn) {
+      turn = {
+        view: newRow('wk', { ts: Date.now() }),
+        raw: '',
+        lastUpdate: Date.now(),
+        startedAt: startedAt.get(id) ?? Date.now(),
+      };
+      turns.set(id, turn);
     }
-    // Settle any live activity group orphaned by a mid-run daemon death.
-    activityFeed.finalizeStale(STALE_BUBBLE_MS);
-  };
-  const staleBubbleSweep = setInterval(finalizeStaleBubbles, 15_000);
-  window.addEventListener('beforeunload', () => clearInterval(staleBubbleSweep));
+    return turn;
+  }
+
+  const staleTurnSweep = setInterval(() => {
+    const now = Date.now();
+    for (const [id, turn] of turns) {
+      if (now - turn.lastUpdate < STALE_TURN_MS) continue;
+      turn.view.render(`${turn.raw}\n\n_(connection lost)_`);
+      turns.delete(id);
+      startedAt.delete(id);
+    }
+  }, 15_000);
+  window.addEventListener('beforeunload', () => clearInterval(staleTurnSweep));
+
+  // A real socket drop (not step-silence) is what settles live activity groups:
+  // a slow single tool call keeps the socket open, so it stays "working".
+  client.onStatusChange((connected) => {
+    shell.setConnected(connected);
+    if (!connected) activityFeed.finalizeAllActive('disconnected');
+  });
 
   client.on('chat.assistant_delta', (env) => {
-    const id = env.payload.messageId ?? '_';
-    let entry = bubbles.get(id);
-    if (!entry) {
-      const el = appendBubble(log, 'wk');
-      el.dataset['raw'] = '';
-      entry = { el, lastUpdate: Date.now() };
-      bubbles.set(id, entry);
-    }
-    entry.el.dataset['raw'] = (entry.el.dataset['raw'] ?? '') + env.payload.delta;
-    entry.el.textContent = entry.el.dataset['raw'] ?? ''; // plain while streaming
-    entry.lastUpdate = Date.now();
-    log.scrollTop = log.scrollHeight;
+    const turn = ensureTurn(env.payload.messageId ?? '_');
+    turn.raw += env.payload.delta;
+    turn.view.setStreaming(turn.raw);
+    turn.lastUpdate = Date.now();
+    scrollToEnd();
   });
 
   client.on('chat.assistant_done', (env) => {
     const id = env.payload.messageId ?? '_';
-    const entry = bubbles.get(id);
     const text = env.payload.text;
-    if (entry) {
-      renderInto(entry.el, 'wk', text); // Markdown once complete
-      bubbles.delete(id);
-    }
+    const turn = ensureTurn(id); // covers replies that never streamed a delta
+    turn.view.setElapsed(Date.now() - turn.startedAt);
+    turn.view.render(text); // Markdown once complete
+    turns.delete(id);
+    startedAt.delete(id);
     activityFeed.finalize(id, 'done');
     record('wk', text);
+    scrollToEnd();
   });
 
-  // Live execution feed → the activity panel (correlated by taskId | messageId).
+  // Live execution feed → the activity view, plus inline chips on the chat turn
+  // the steps belong to (correlated by messageId).
   client.on('activity.step', (env) => {
     activityFeed.apply(env.payload);
+    const messageId = env.payload.messageId;
+    if (!messageId) return;
+    const step = env.payload.step;
+    if (step.kind === 'tool_use') {
+      ensureTurn(messageId).view.addTool(step.toolId, step.label, step.summary);
+      scrollToEnd();
+    } else if (step.kind === 'tool_result') {
+      turns.get(messageId)?.view.resolveTool(step.toolId, step.ok);
+    }
   });
 
-  // Task events → the task-list panel (+ activity-group titles/finalization).
+  // Task events → the tasks view (+ activity-group titles/finalization).
   client.on('task.created', (env) => {
     const t = env.payload.task;
-    taskList.upsert({ id: t.id, prompt: t.prompt, state: t.state });
+    tasksView.upsert({ id: t.id, prompt: t.prompt, state: t.state });
     activityFeed.setTitle(t.id, t.prompt);
   });
   client.on('task.updated', (env) => {
     const t = env.payload.task;
-    taskList.upsert({ id: t.id, prompt: t.prompt, state: t.state });
+    tasksView.upsert({ id: t.id, prompt: t.prompt, state: t.state });
     activityFeed.setTitle(t.id, t.prompt);
   });
   client.on('task.progress', (env) => {
-    taskList.progress(env.payload.taskId, env.payload.progress.text);
+    tasksView.progress(env.payload.taskId, env.payload.progress.text);
   });
   client.on('task.done', (env) => {
     const t = env.payload.task;
-    taskList.upsert({ id: t.id, prompt: t.prompt, state: t.state, result: t.result?.summary });
+    tasksView.upsert({
+      id: t.id,
+      prompt: t.prompt,
+      state: t.state,
+      ...(t.result?.summary !== undefined ? { result: t.result.summary } : {}),
+    });
     activityFeed.finalize(t.id, t.state);
   });
   client.on('task.error', (env) => {
-    taskList.upsert({
+    tasksView.upsert({
       id: env.payload.taskId,
       prompt: '',
       state: 'error',
@@ -306,7 +359,7 @@ async function main(): Promise<void> {
     activityFeed.finalize(env.payload.taskId, 'error');
   });
   client.on('task.cancelled', (env) => {
-    taskList.upsert({ id: env.payload.taskId, prompt: '', state: 'cancelled' });
+    tasksView.upsert({ id: env.payload.taskId, prompt: '', state: 'cancelled' });
     activityFeed.finalize(env.payload.taskId, 'cancelled');
   });
 
@@ -314,162 +367,56 @@ async function main(): Promise<void> {
   // avoid partial-transcript churn), marked as spoken and persisted like typed ones.
   client.on('voice.transcript', (env) => {
     if (!env.payload.final) return;
-    const who = env.payload.role === 'user' ? 'you' : 'wk';
-    addMessage(who, env.payload.text, true);
+    const who: Who = env.payload.role === 'user' ? 'you' : 'wk';
+    addMessage(who, env.payload.text, { spoken: true, ts: Date.now() });
     record(who, env.payload.text, true);
-    log.scrollTop = log.scrollHeight;
-  });
-
-  document.getElementById('clear')?.addEventListener('click', clearConversation);
-
-  // --- Conversation history (server-side) ---------------------------------
-  const historyPanel = document.getElementById('history-panel');
-  const historyList = document.getElementById('history-list');
-  const openHistory = () => {
-    historyPanel?.classList.toggle('open');
-    if (historyPanel?.classList.contains('open')) client.send('history.list', {});
-  };
-  document.getElementById('history-toggle')?.addEventListener('click', openHistory);
-  document
-    .getElementById('history-close')
-    ?.addEventListener('click', () => historyPanel?.classList.remove('open'));
-  document.getElementById('history-new')?.addEventListener('click', () => {
-    client.send('history.new', {});
-    clearConversation();
-    historyPanel?.classList.remove('open');
+    scrollToEnd();
   });
 
   client.on('history.list_result', (env) => {
-    if (!historyList) return;
-    historyList.innerHTML = '';
-    for (const c of env.payload.conversations) {
-      const row = document.createElement('div');
-      row.className = 'conv';
-      const title = document.createElement('span');
-      title.className = 'conv__title';
-      title.textContent = c.title;
-      const meta = document.createElement('span');
-      meta.className = 'conv__meta';
-      meta.textContent = `${c.messageCount} msg`;
-      row.append(title, meta);
-      row.addEventListener('click', () => client.send('history.load', { conversationId: c.id }));
-      historyList.appendChild(row);
-    }
+    historyView.setConversations(env.payload.conversations);
   });
 
   client.on('history.load_result', (env) => {
     // Replace the log + local transcript with the loaded conversation.
-    log.innerHTML = '';
+    log.replaceChildren();
     transcript.length = 0;
+    lastDayTs = undefined;
     for (const m of env.payload.messages) {
-      const who = m.role === 'user' ? 'you' : 'wk';
-      addMessage(who, m.text);
-      transcript.push({ who, text: m.text });
+      const who: Who = m.role === 'user' ? 'you' : 'wk';
+      addMessage(who, m.text, { ts: m.ts });
+      transcript.push({ who, text: m.text, ts: m.ts });
     }
     saveTranscript(transcript);
-    log.scrollTop = log.scrollHeight;
-    historyPanel?.classList.remove('open');
-  });
-
-  // --- Proactive watches ---------------------------------------------------
-  const watchesPanel = document.getElementById('watches-panel');
-  const watchesList = document.getElementById('watches-list');
-  document.getElementById('watches-toggle')?.addEventListener('click', () => {
-    watchesPanel?.classList.toggle('open');
-    if (watchesPanel?.classList.contains('open')) client.send('watches.list', {});
-  });
-  document
-    .getElementById('watches-close')
-    ?.addEventListener('click', () => watchesPanel?.classList.remove('open'));
-  document.getElementById('watch-form')?.addEventListener('submit', (e) => {
-    e.preventDefault();
-    const prompt = (document.getElementById('watch-prompt') as HTMLInputElement).value.trim();
-    const cron = (document.getElementById('watch-cron') as HTMLInputElement).value.trim();
-    if (!prompt || !cron) return;
-    client.send('watches.add', { prompt, cron });
-    (document.getElementById('watch-prompt') as HTMLInputElement).value = '';
+    shell.setView('chat');
+    scrollToEnd();
   });
 
   client.on('watches.list_result', (env) => {
-    if (!watchesList) return;
-    watchesList.replaceChildren();
-    for (const w of env.payload.watches) {
-      const row = document.createElement('div');
-      row.className = 'watch';
-      const head = document.createElement('div');
-      head.className = 'watch__head';
-      const cron = document.createElement('span');
-      cron.className = 'watch__cron';
-      cron.textContent = w.cron;
-      head.appendChild(cron);
-      if (w.builtin) {
-        const badge = document.createElement('span');
-        badge.className = 'watch__badge';
-        badge.textContent = 'built-in';
-        head.appendChild(badge);
-      } else {
-        const rm = document.createElement('button');
-        rm.type = 'button';
-        rm.className = 'watch__remove';
-        rm.textContent = 'Remove';
-        rm.addEventListener('click', () => client.send('watches.remove', { id: w.id }));
-        head.appendChild(rm);
-      }
-      const prompt = document.createElement('div');
-      prompt.className = 'watch__prompt';
-      prompt.textContent = w.prompt;
-      row.append(head, prompt);
-      watchesList.appendChild(row);
-    }
+    watchesView.setWatches(env.payload.watches);
   });
 
   client.on('error', (env) => {
-    status.textContent = `error: ${env.payload.message}`;
+    shell.setNotice(env.payload.message);
   });
+
+  function submit(text: string): void {
+    const messageId = crypto.randomUUID();
+    const ts = Date.now();
+    lastUserText = text;
+    startedAt.set(messageId, ts);
+    addMessage('you', text, { ts });
+    record('you', text);
+    client.send('chat.user_message', { text, messageId });
+  }
 
   form.addEventListener('submit', (e) => {
     e.preventDefault();
     const text = input.value.trim();
     if (!text) return;
-    const messageId = crypto.randomUUID();
-    renderInto(appendBubble(log, 'you'), 'you', text);
-    record('you', text);
-    client.send('chat.user_message', { text, messageId });
     input.value = '';
+    submit(text);
   });
-}
-
-/** Wire the settings (⚙) and tasks (📋) slide-over panels. */
-function wirePanels(): void {
-  const bridge = (window as unknown as { workerking: SettingsBridge }).workerking;
-  const settingsEl = document.getElementById('settings');
-  const settingsBody = document.getElementById('settings-body');
-  if (settingsEl && settingsBody) {
-    const settings = new Settings(settingsBody, bridge);
-    document.getElementById('gear')?.addEventListener('click', () => {
-      settingsEl.classList.add('open');
-      void settings.render();
-    });
-    document
-      .getElementById('settings-close')
-      ?.addEventListener('click', () => settingsEl.classList.remove('open'));
-  }
-
-  const tasksEl = document.getElementById('tasks-panel');
-  document
-    .getElementById('tasks-toggle')
-    ?.addEventListener('click', () => tasksEl?.classList.toggle('open'));
-  document
-    .getElementById('tasks-close')
-    ?.addEventListener('click', () => tasksEl?.classList.remove('open'));
-
-  const activityEl = document.getElementById('activity-panel');
-  document
-    .getElementById('activity-toggle')
-    ?.addEventListener('click', () => activityEl?.classList.toggle('open'));
-  document
-    .getElementById('activity-close')
-    ?.addEventListener('click', () => activityEl?.classList.remove('open'));
 }
 
 main();

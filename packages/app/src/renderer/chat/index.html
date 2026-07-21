@@ -4,677 +4,342 @@
     <meta charset="utf-8" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; connect-src 'self' ws://127.0.0.1:* ws://localhost:*; style-src 'unsafe-inline'; script-src 'self'"
+      content="default-src 'self'; connect-src 'self' ws://127.0.0.1:* ws://localhost:*; style-src 'self' 'unsafe-inline'; script-src 'self'"
     />
     <title>WorkerKing</title>
-    <style>
-      :root {
-        color-scheme: light dark;
-      }
-      html,
-      body {
-        margin: 0;
-        height: 100%;
-        font-family: system-ui, sans-serif;
-      }
-      body {
-        display: flex;
-        flex-direction: column;
-        background: Canvas;
-        color: CanvasText;
-      }
-      header {
-        padding: 10px 14px;
-        font-weight: 600;
-        border-bottom: 1px solid rgba(128, 128, 128, 0.25);
-        display: flex;
-        justify-content: space-between;
-        align-items: baseline;
-        gap: 10px;
-      }
-      #status {
-        font-weight: 400;
-        font-size: 12px;
-        opacity: 0.7;
-      }
-      #log {
-        flex: 1;
-        overflow-y: auto;
-        padding: 12px;
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
-      }
-      .bubble {
-        max-width: 78%;
-        padding: 8px 12px;
-        border-radius: 14px;
-        white-space: pre-wrap;
-        line-height: 1.35;
-        word-break: break-word;
-      }
-      .bubble--you {
-        align-self: flex-end;
-        background: #2a6cff;
-        color: #fff;
-        border-bottom-right-radius: 4px;
-      }
-      .bubble--wk {
-        align-self: flex-start;
-        background: rgba(128, 128, 128, 0.18);
-        border-bottom-left-radius: 4px;
-        position: relative;
-      }
-      /* Copy affordances (message + code), revealed on hover */
-      .bubble__actions {
-        position: absolute;
-        top: 4px;
-        right: 6px;
-        opacity: 0;
-        transition: opacity 0.12s;
-      }
-      .bubble--wk:hover .bubble__actions {
-        opacity: 1;
-      }
-      .bubble__copy {
-        background: rgba(128, 128, 128, 0.35);
-        color: inherit;
-        font-size: 12px;
-        padding: 2px 6px;
-        border-radius: 6px;
-        line-height: 1;
-      }
-      .bubble--wk pre.code {
-        position: relative;
-      }
-      .code__copy {
-        position: absolute;
-        top: 5px;
-        right: 5px;
-        background: rgba(128, 128, 128, 0.4);
-        color: inherit;
-        font-size: 11px;
-        padding: 2px 7px;
-        border-radius: 6px;
-        opacity: 0;
-        transition: opacity 0.12s;
-      }
-      .bubble--wk pre.code:hover .code__copy {
-        opacity: 1;
-      }
-      /* Markdown inside assistant bubbles */
-      .bubble--wk p {
-        margin: 0 0 6px;
-      }
-      .bubble--wk p:last-child {
-        margin-bottom: 0;
-      }
-      .bubble--wk ul,
-      .bubble--wk ol {
-        margin: 4px 0;
-        padding-left: 20px;
-      }
-      .bubble--wk code {
-        font-family: ui-monospace, monospace;
-        font-size: 0.92em;
-        background: rgba(128, 128, 128, 0.22);
-        padding: 1px 4px;
-        border-radius: 4px;
-      }
-      .bubble--wk pre.code {
-        background: rgba(0, 0, 0, 0.28);
-        padding: 8px 10px;
-        border-radius: 8px;
-        overflow-x: auto;
-        margin: 6px 0;
-      }
-      .bubble--wk pre.code code {
-        background: none;
-        padding: 0;
-      }
-      .bubble--wk a {
-        color: inherit;
-        text-decoration: underline;
-      }
-      /* Header buttons + count badges */
-      #tasks-toggle,
-      #activity-toggle {
-        position: relative;
-      }
-      #tasks-count,
-      #activity-count {
-        display: none;
-      }
-      #tasks-count.has,
-      #activity-count.has {
-        display: inline-block;
-        min-width: 16px;
-        text-align: center;
-        font-size: 11px;
-        font-weight: 700;
-        background: #2a6cff;
-        color: #fff;
-        border-radius: 9px;
-        padding: 0 5px;
-        margin-left: 4px;
-      }
-      /* Tasks panel (slide-over, mirrors settings) */
-      #tasks-panel {
-        display: none;
-        position: absolute;
-        inset: 0;
-        background: Canvas;
-        overflow-y: auto;
-        padding: 14px 16px;
-        z-index: 5;
-      }
-      #tasks-panel.open {
-        display: block;
-      }
-      #tasks-panel h2 {
-        margin: 4px 0 12px;
-      }
-      #tasks-list:empty::after {
-        content: 'No delegated tasks yet.';
-        opacity: 0.6;
-        font-size: 13px;
-      }
-      .task {
-        border: 1px solid rgba(128, 128, 128, 0.3);
-        border-radius: 10px;
-        padding: 8px 10px;
-        margin-bottom: 8px;
-      }
-      .task__head {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-      }
-      .task__title {
-        font-size: 13px;
-        word-break: break-word;
-      }
-      .task__detail {
-        font-size: 12px;
-        opacity: 0.8;
-        margin-top: 5px;
-        white-space: pre-wrap;
-        word-break: break-word;
-      }
-      .task__badge {
-        font-size: 10px;
-        text-transform: uppercase;
-        letter-spacing: 0.04em;
-        font-weight: 700;
-        padding: 2px 6px;
-        border-radius: 6px;
-        background: rgba(128, 128, 128, 0.25);
-        flex: none;
-      }
-      .task--running .task__badge,
-      .task--queued .task__badge {
-        background: #2a6cff;
-        color: #fff;
-      }
-      .task--done .task__badge {
-        background: #17c964;
-        color: #04210f;
-      }
-      .task--error .task__badge {
-        background: #f5544a;
-        color: #fff;
-      }
-      .task--cancelled .task__badge {
-        background: rgba(128, 128, 128, 0.4);
-      }
-      #tasks-close {
-        margin-top: 8px;
-        background: rgba(128, 128, 128, 0.25);
-        color: inherit;
-      }
-      /* Activity panel (live execution feed; slide-over, mirrors tasks) */
-      #activity-panel {
-        display: none;
-        position: absolute;
-        inset: 0;
-        background: Canvas;
-        overflow-y: auto;
-        padding: 14px 16px;
-        z-index: 5;
-      }
-      #activity-panel.open {
-        display: block;
-      }
-      #activity-panel h2 {
-        margin: 4px 0 6px;
-      }
-      #activity-list:empty::after {
-        content: 'Nothing running right now.';
-        opacity: 0.6;
-        font-size: 13px;
-      }
-      .act-group {
-        border: 1px solid rgba(128, 128, 128, 0.3);
-        border-radius: 10px;
-        padding: 8px 10px;
-        margin-bottom: 8px;
-      }
-      .act-group__head {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        margin-bottom: 6px;
-      }
-      .act-group__badge {
-        font-size: 10px;
-        text-transform: uppercase;
-        letter-spacing: 0.04em;
-        font-weight: 700;
-        padding: 2px 6px;
-        border-radius: 6px;
-        background: rgba(128, 128, 128, 0.25);
-        flex: none;
-      }
-      .act-group--active .act-group__badge {
-        background: #2a6cff;
-        color: #fff;
-      }
-      .act-group__title {
-        font-size: 13px;
-        font-weight: 600;
-        word-break: break-word;
-      }
-      .act-row {
-        display: flex;
-        flex-wrap: wrap;
-        align-items: baseline;
-        gap: 6px;
-        font-size: 12px;
-        padding: 3px 0;
-        border-top: 1px solid rgba(128, 128, 128, 0.15);
-      }
-      .act-row__label {
-        font-weight: 700;
-        flex: none;
-      }
-      .act-row__summary,
-      .act-row__result {
-        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-        opacity: 0.85;
-        word-break: break-all;
-      }
-      .act-row__result {
-        width: 100%;
-        opacity: 0.7;
-      }
-      .act-row--ok .act-row__label {
-        color: #17c964;
-      }
-      .act-row--error .act-row__label {
-        color: #f5544a;
-      }
-      .act-row--think {
-        opacity: 0.7;
-        font-style: italic;
-        white-space: pre-wrap;
-        word-break: break-word;
-      }
-      #composer {
-        display: flex;
-        gap: 8px;
-        padding: 10px;
-        border-top: 1px solid rgba(128, 128, 128, 0.25);
-        position: relative;
-      }
-      /* Command palette (typing "/") */
-      .palette {
-        position: absolute;
-        left: 10px;
-        right: 10px;
-        bottom: calc(100% + 4px);
-        max-height: 240px;
-        overflow-y: auto;
-        background: Canvas;
-        border: 1px solid rgba(128, 128, 128, 0.4);
-        border-radius: 10px;
-        box-shadow: 0 -6px 20px rgba(0, 0, 0, 0.25);
-        z-index: 6;
-      }
-      .palette__item {
-        display: flex;
-        gap: 8px;
-        align-items: baseline;
-        padding: 7px 10px;
-        cursor: pointer;
-      }
-      .palette__item--active,
-      .palette__item:hover {
-        background: rgba(42, 108, 255, 0.18);
-      }
-      .palette__kind {
-        font-size: 10px;
-        text-transform: uppercase;
-        opacity: 0.6;
-        flex: none;
-        min-width: 62px;
-      }
-      .palette__name {
-        font-weight: 600;
-        font-size: 13px;
-        flex: none;
-      }
-      .palette__desc {
-        font-size: 12px;
-        opacity: 0.65;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-      }
-      #input {
-        flex: 1;
-        padding: 9px 12px;
-        border-radius: 10px;
-        border: 1px solid rgba(128, 128, 128, 0.4);
-        background: Field;
-        color: FieldText;
-        font: inherit;
-      }
-      button {
-        padding: 9px 16px;
-        border: none;
-        border-radius: 10px;
-        background: #2a6cff;
-        color: #fff;
-        font: inherit;
-        cursor: pointer;
-      }
-      button:hover {
-        filter: brightness(1.08);
-      }
-      #gear,
-      #clear,
-      #tasks-toggle,
-      #activity-toggle,
-      #history-toggle,
-      #watches-toggle {
-        background: transparent;
-        color: inherit;
-        font-size: 16px;
-        padding: 2px 6px;
-      }
-      /* Watches panel (slide-over) */
-      #watches-panel {
-        display: none;
-        position: absolute;
-        inset: 0;
-        background: Canvas;
-        overflow-y: auto;
-        padding: 14px 16px;
-        z-index: 5;
-      }
-      #watches-panel.open {
-        display: block;
-      }
-      #watches-panel h2 {
-        margin: 4px 0 6px;
-      }
-      #watches-panel p.hint {
-        font-size: 12px;
-        opacity: 0.7;
-        margin: 0 0 12px;
-      }
-      #watch-form {
-        display: grid;
-        gap: 6px;
-        margin-bottom: 14px;
-      }
-      #watch-form input {
-        padding: 7px 9px;
-        border-radius: 8px;
-        border: 1px solid rgba(128, 128, 128, 0.4);
-        background: Field;
-        color: FieldText;
-        font: inherit;
-      }
-      .watch {
-        border: 1px solid rgba(128, 128, 128, 0.28);
-        border-radius: 10px;
-        padding: 8px 10px;
-        margin-bottom: 8px;
-      }
-      .watch__head {
-        display: flex;
-        justify-content: space-between;
-        gap: 8px;
-        align-items: baseline;
-      }
-      .watch__cron {
-        font-family: ui-monospace, monospace;
-        font-size: 11px;
-        opacity: 0.7;
-        flex: none;
-      }
-      .watch__prompt {
-        font-size: 12.5px;
-        margin-top: 4px;
-        opacity: 0.85;
-        word-break: break-word;
-      }
-      .watch__badge {
-        font-size: 10px;
-        text-transform: uppercase;
-        font-weight: 700;
-        opacity: 0.55;
-      }
-      .watch__remove {
-        background: rgba(245, 84, 74, 0.85);
-        color: #fff;
-        font-size: 11px;
-        padding: 2px 8px;
-        border-radius: 6px;
-      }
-      #watches-close {
-        margin-top: 8px;
-        background: rgba(128, 128, 128, 0.25);
-        color: inherit;
-      }
-      /* History panel (slide-over) */
-      #history-panel {
-        display: none;
-        position: absolute;
-        inset: 0;
-        background: Canvas;
-        overflow-y: auto;
-        padding: 14px 16px;
-        z-index: 5;
-      }
-      #history-panel.open {
-        display: block;
-      }
-      #history-panel h2 {
-        margin: 4px 0 12px;
-      }
-      #history-new {
-        margin-bottom: 10px;
-      }
-      #history-list:empty::after {
-        content: 'No past conversations yet.';
-        opacity: 0.6;
-        font-size: 13px;
-      }
-      .conv {
-        display: flex;
-        justify-content: space-between;
-        gap: 10px;
-        align-items: baseline;
-        padding: 9px 10px;
-        border: 1px solid rgba(128, 128, 128, 0.28);
-        border-radius: 10px;
-        margin-bottom: 8px;
-        cursor: pointer;
-      }
-      .conv:hover {
-        background: rgba(128, 128, 128, 0.12);
-      }
-      .conv__title {
-        font-size: 13px;
-        word-break: break-word;
-      }
-      .conv__meta {
-        font-size: 11px;
-        opacity: 0.6;
-        flex: none;
-      }
-      #history-close {
-        margin-top: 8px;
-        background: rgba(128, 128, 128, 0.25);
-        color: inherit;
-      }
-      /* Spoken (voice) turns get a subtle mic marker */
-      .bubble--spoken::after {
-        content: '🎙';
-        position: absolute;
-        bottom: 2px;
-        right: 6px;
-        font-size: 10px;
-        opacity: 0.45;
-      }
-      .bubble--you.bubble--spoken {
-        position: relative;
-      }
-      #settings {
-        display: none;
-        position: absolute;
-        inset: 0;
-        background: Canvas;
-        overflow-y: auto;
-        padding: 14px 16px;
-        z-index: 5;
-      }
-      #settings.open {
-        display: block;
-      }
-      #settings h2 {
-        margin: 4px 0 12px;
-      }
-      #settings label {
-        display: block;
-        margin: 10px 0;
-        font-size: 13px;
-        font-weight: 600;
-      }
-      #settings label.check {
-        font-weight: 400;
-        display: flex;
-        align-items: center;
-        gap: 8px;
-      }
-      #settings input:not([type='checkbox']),
-      #settings textarea,
-      #settings select {
-        display: block;
-        width: 100%;
-        margin-top: 4px;
-        padding: 7px 9px;
-        border-radius: 8px;
-        border: 1px solid rgba(128, 128, 128, 0.4);
-        background: Field;
-        color: FieldText;
-        font: inherit;
-        box-sizing: border-box;
-      }
-      #settings .row {
-        display: flex;
-        gap: 8px;
-        align-items: center;
-      }
-      #settings .row input {
-        margin-top: 0;
-      }
-      #settings hr {
-        border: none;
-        border-top: 1px solid rgba(128, 128, 128, 0.25);
-        margin: 14px 0;
-      }
-      #settings .ok {
-        color: #17c964;
-      }
-      #settings .warn {
-        color: #f5a623;
-      }
-      #settings .status {
-        font-size: 12px;
-        opacity: 0.7;
-        min-height: 16px;
-      }
-      #settings-close {
-        margin-top: 8px;
-        background: rgba(128, 128, 128, 0.25);
-        color: inherit;
-      }
-    </style>
   </head>
   <body>
-    <header>
-      <span>WorkerKing</span>
-      <span class="row" style="display: flex; gap: 10px; align-items: center">
-        <span id="status">connecting…</span>
-        <button id="history-toggle" title="History">🕘</button>
-        <button id="watches-toggle" title="Proactive watches">⏰</button>
-        <button id="tasks-toggle" title="Tasks">📋<span id="tasks-count"></span></button>
-        <button id="activity-toggle" title="Live activity">👁<span id="activity-count"></span></button>
-        <button id="clear" title="Clear conversation">🗑</button>
-        <button id="gear" title="Settings">⚙</button>
-      </span>
-    </header>
-    <div id="log"></div>
-    <form id="composer">
-      <input id="input" type="text" placeholder="Ask WorkerKing…" autocomplete="off" autofocus />
-      <button type="submit">Send</button>
-    </form>
-    <section id="watches-panel">
-      <h2>Proactive watches</h2>
-      <p class="hint">
-        Scheduled prompts WorkerKing runs to decide if it should speak up (needs proactive mode on).
-      </p>
-      <form id="watch-form">
-        <input
-          id="watch-prompt"
-          type="text"
-          placeholder="What to check (e.g. remind me of unread urgent email)"
-        />
-        <input
-          id="watch-cron"
-          type="text"
-          placeholder="Cron, e.g. */15 * * * *"
-          value="*/15 * * * *"
-        />
-        <button type="submit">Add watch</button>
-      </form>
-      <div id="watches-list"></div>
-      <button id="watches-close">Close</button>
-    </section>
-    <section id="history-panel">
-      <h2>History</h2>
-      <button id="history-new">+ New chat</button>
-      <div id="history-list"></div>
-      <button id="history-close">Close</button>
-    </section>
-    <section id="tasks-panel">
-      <h2>Tasks</h2>
-      <div id="tasks-list"></div>
-      <button id="tasks-close">Close</button>
-    </section>
-    <section id="activity-panel">
-      <h2>Live activity</h2>
-      <p class="hint">What WorkerKing is doing right now — files, commands, and reasoning as it works.</p>
-      <div id="activity-list"></div>
-      <button id="activity-close">Close</button>
-    </section>
-    <section id="settings">
-      <div id="settings-body"></div>
-      <button id="settings-close">Close</button>
-    </section>
+    <!-- Custom chrome: the window is frameless (see main/windows/ChatWindow.ts). -->
+    <div class="titlebar">
+      <span class="titlebar__mark"></span>
+      <span class="titlebar__name">WorkerKing</span>
+      <div class="titlebar__controls">
+        <button class="tb" id="tb-min" type="button" title="Minimize">
+          <span class="icon"
+            ><svg width="11" height="11" viewBox="0 0 11 11">
+              <line x1="1" y1="6" x2="10" y2="6" stroke="currentColor" stroke-width="1.2" /></svg
+          ></span>
+        </button>
+        <button class="tb" id="tb-max" type="button" title="Maximize">
+          <span class="icon"
+            ><svg width="10" height="10" viewBox="0 0 10 10">
+              <rect
+                x="1"
+                y="1"
+                width="8"
+                height="8"
+                rx="1.3"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.2"
+              /></svg
+          ></span>
+        </button>
+        <button class="tb tb--close" id="tb-close" type="button" title="Close">
+          <span class="icon"
+            ><svg width="11" height="11" viewBox="0 0 11 11">
+              <path d="M1 1L10 10M10 1L1 10" stroke="currentColor" stroke-width="1.2" /></svg
+          ></span>
+        </button>
+      </div>
+    </div>
+
+    <div class="shell">
+      <nav class="rail">
+        <div class="rail__brand">
+          <div class="rail__mark">W</div>
+          <div class="rail__titles">
+            <div class="rail__title">WorkerKing</div>
+            <div class="rail__sub">AI desktop</div>
+          </div>
+        </div>
+
+        <div class="rail__nav">
+          <button class="nav" type="button" data-nav="chat">
+            <span class="icon"
+              ><svg
+                width="17"
+                height="17"
+                viewBox="0 0 17 17"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.5"
+                stroke-linejoin="round"
+              >
+                <path
+                  d="M2.5 4.2a1.5 1.5 0 0 1 1.5-1.5h9a1.5 1.5 0 0 1 1.5 1.5v6a1.5 1.5 0 0 1-1.5 1.5H7l-3.2 2.4v-2.4H4a1.5 1.5 0 0 1-1.5-1.5z"
+                /></svg
+            ></span>
+            <span class="nav__label">Chat</span>
+          </button>
+
+          <button class="nav" type="button" data-nav="history">
+            <span class="icon"
+              ><svg
+                width="17"
+                height="17"
+                viewBox="0 0 17 17"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.5"
+              >
+                <circle cx="8.5" cy="8.5" r="5.8" />
+                <path d="M8.5 5.2v3.5l2.3 1.4" stroke-linecap="round" /></svg
+            ></span>
+            <span class="nav__label">History</span>
+          </button>
+
+          <button class="nav" type="button" data-nav="watches">
+            <span class="icon"
+              ><svg
+                width="17"
+                height="17"
+                viewBox="0 0 17 17"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.5"
+                stroke-linecap="round"
+              >
+                <circle cx="8.5" cy="9.3" r="4.6" />
+                <path d="M3.2 4.3 5 2.6M13.8 4.3 12 2.6M8.5 6.8v2.5l1.7 1" /></svg
+            ></span>
+            <span class="nav__label">Watches</span>
+            <span class="nav__badge"></span>
+          </button>
+
+          <button class="nav" type="button" data-nav="tasks">
+            <span class="icon"
+              ><svg
+                width="17"
+                height="17"
+                viewBox="0 0 17 17"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.5"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <rect x="3.5" y="3" width="10" height="11.5" rx="1.6" />
+                <path d="M6.2 3V2h4.6v1M5.8 7.4l1.3 1.3 2.4-2.6M5.8 11.2h4" /></svg
+            ></span>
+            <span class="nav__label">Tasks</span>
+            <span class="nav__badge"></span>
+          </button>
+
+          <button class="nav" type="button" data-nav="activity">
+            <span class="icon"
+              ><svg
+                width="17"
+                height="17"
+                viewBox="0 0 17 17"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.5"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <polyline points="2,9 5,9 6.8,4 10.2,13 12,9 15,9" /></svg
+            ></span>
+            <span class="nav__label">Activity</span>
+            <span class="nav__live"></span>
+          </button>
+        </div>
+
+        <button class="nav nav--settings" type="button" data-nav="settings">
+          <span class="icon"
+            ><svg
+              width="17"
+              height="17"
+              viewBox="0 0 17 17"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+              stroke-linecap="round"
+            >
+              <path d="M2.5 5.5h7M14.5 5.5h-2M2.5 11.5h2M14.5 11.5h-7" />
+              <circle cx="11" cy="5.5" r="1.9" />
+              <circle cx="6" cy="11.5" r="1.9" /></svg
+          ></span>
+          <span class="nav__label">Settings</span>
+        </button>
+      </nav>
+
+      <main class="main">
+        <header class="head">
+          <span class="head__title" id="view-title">WorkerKing</span>
+          <div class="status status--down" id="status">
+            <button class="status__pill" id="status-pill" type="button">
+              <span class="status__dot"></span><span id="status-text">Connecting…</span>
+            </button>
+            <div class="status__pop" id="status-pop">
+              <div class="status__head">
+                <span class="status__dot"></span><span id="status-head">Connecting…</span>
+              </div>
+              <div class="status__row">
+                <span class="status__key">Daemon</span
+                ><span class="status__val" id="status-daemon">—</span>
+              </div>
+              <div class="status__row">
+                <span class="status__key">Host</span
+                ><span class="status__val" id="status-host">—</span>
+              </div>
+              <div class="status__note" id="status-note"></div>
+              <button class="btn status__reconnect" id="status-reconnect" type="button">
+                Reconnect
+              </button>
+            </div>
+          </div>
+        </header>
+
+        <!-- ============================================================ chat -->
+        <section class="view view--active" data-view="chat">
+          <div class="chat__scroll" id="chat-scroll">
+            <div class="chat__col" id="log"></div>
+          </div>
+          <div class="chat__foot">
+            <div class="chat__col">
+              <form class="composer" id="composer" autocomplete="off">
+                <button class="composer__ask" id="ask" type="button" title="Browse capabilities">
+                  <span class="icon"
+                    ><svg
+                      width="13"
+                      height="13"
+                      viewBox="0 0 13 13"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.5"
+                      stroke-linecap="round"
+                    >
+                      <path d="M3 4.2 6.5 8 10 4.2" /></svg
+                  ></span>
+                  Ask
+                </button>
+                <input
+                  id="input"
+                  class="composer__input"
+                  type="text"
+                  placeholder="Ask WorkerKing or type / for commands…"
+                  autocomplete="off"
+                  autofocus
+                />
+                <button class="composer__send" type="submit">
+                  Send
+                  <span class="icon"
+                    ><svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 14 14"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.6"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <path d="M2 7h9M7 3l4 4-4 4" /></svg
+                  ></span>
+                </button>
+              </form>
+              <div class="composer__note">
+                WorkerKing can take actions on your machine. Review tool calls in
+                <button class="linkish" type="button" data-nav-link="activity">Activity</button>.
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ========================================================= history -->
+        <section class="view" data-view="history">
+          <div class="view__scroll">
+            <div class="view__col">
+              <div class="hist__bar">
+                <div class="search">
+                  <span class="icon"
+                    ><svg
+                      width="15"
+                      height="15"
+                      viewBox="0 0 15 15"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.5"
+                    >
+                      <circle cx="6.5" cy="6.5" r="4.5" />
+                      <path d="M10 10l3 3" stroke-linecap="round" /></svg
+                  ></span>
+                  <input id="history-search" type="text" placeholder="Search conversations…" />
+                </div>
+                <button class="btn" id="history-new" type="button">+ New chat</button>
+              </div>
+              <div id="history-list"></div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ========================================================= watches -->
+        <section class="view" data-view="watches">
+          <div class="view__scroll">
+            <div class="view__col">
+              <div class="view__note">
+                Scheduled prompts WorkerKing runs to decide if it should speak up (needs proactive
+                mode on).
+              </div>
+              <form class="card watch-form" id="watch-form">
+                <input
+                  class="field"
+                  id="watch-prompt"
+                  type="text"
+                  placeholder="What to check (e.g. remind me of unread urgent email)"
+                />
+                <div class="watch-form__row">
+                  <input
+                    class="field"
+                    id="watch-cron"
+                    type="text"
+                    placeholder="Cron, e.g. */15 * * * *"
+                    value="*/15 * * * *"
+                  />
+                  <button class="btn btn--primary" type="submit">Add watch</button>
+                </div>
+              </form>
+              <div class="view__note" id="watches-count">No watches configured yet.</div>
+              <div id="watches-list"></div>
+            </div>
+          </div>
+        </section>
+
+        <!-- =========================================================== tasks -->
+        <section class="view" data-view="tasks">
+          <div class="view__scroll">
+            <div class="view__col">
+              <div class="view__note" id="tasks-count">No delegated tasks yet.</div>
+              <div id="tasks-list"></div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ======================================================== activity -->
+        <section class="view" data-view="activity">
+          <div class="view__scroll">
+            <div class="view__col">
+              <div class="live">
+                <span class="live__dot"></span>
+                <span class="live__label">Live feed</span>
+                <span class="live__hint">· streaming tool calls &amp; agent steps</span>
+                <span class="live__count" id="activity-count"></span>
+              </div>
+              <div id="activity-list"></div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ======================================================== settings -->
+        <section class="view" data-view="settings">
+          <div class="view__scroll">
+            <div class="view__col view__col--settings" id="settings-body"></div>
+          </div>
+        </section>
+      </main>
+    </div>
+
     <script type="module" src="./main.ts"></script>
   </body>
 </html>

@@ -62,4 +62,18 @@ export function registerIpc(deps: IpcDeps): void {
   ipcMain.handle('wk:has-secret', (_e, key: string) => hasSecret(key));
 
   ipcMain.on('wk:open-chat', () => deps.onOpenChat());
+
+  // Window controls for the frameless chat window. The caller's own window is
+  // resolved from the sender, so these need no extra wiring in main/index.ts.
+  // Close goes through win.close(), so ChatWindow's hide-on-close still applies.
+  ipcMain.on('wk:window-minimize', (event) =>
+    BrowserWindow.fromWebContents(event.sender)?.minimize(),
+  );
+  ipcMain.on('wk:window-maximize-toggle', (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win) return;
+    if (win.isMaximized()) win.unmaximize();
+    else win.maximize();
+  });
+  ipcMain.on('wk:window-close', (event) => BrowserWindow.fromWebContents(event.sender)?.close());
 }

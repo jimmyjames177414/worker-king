@@ -10,14 +10,20 @@ export interface SettingsBridge {
 }
 
 /**
- * Settings panel — the configurable-in-all-aspects surface: name, personality,
+ * Settings view — the configurable-in-all-aspects surface: name, personality,
  * voice, model, hotkey, toggles, OpenAI key entry, and character-card import.
  * Writes go through the bridge → main (persist) → daemon (live reload).
+ *
+ * The markup is card sections, but the contract `wire()` binds against is
+ * unchanged: every control still carries `data-cfg` (plus `data-cfg-lines` for
+ * newline-delimited arrays and `data-hotkey` for accelerator capture).
  */
 export class Settings {
   constructor(
     private readonly el: HTMLElement,
     private readonly bridge: SettingsBridge,
+    /** Danger zone: wipes the on-screen transcript (owned by main.ts). */
+    private readonly onClearConversation?: () => void,
   ) {}
 
   async render(): Promise<void> {
@@ -55,89 +61,238 @@ export class Settings {
         );
       return `<option value="" ${selected ? '' : 'selected'}>System default</option>${opts.join('')}`;
     };
-    const modelOpts = ['gpt-realtime-mini', 'gpt-realtime']
-      .map((m) => `<option value="${m}" ${cfg.openaiModel === m ? 'selected' : ''}>${m}</option>`)
-      .join('');
-    const providerOpts = [
-      ['gpt-realtime', 'OpenAI Realtime (cloud)'],
-      ['local-cascade', 'Local cascade (offline)'],
-    ]
-      .map(
-        ([v, label]) =>
-          `<option value="${v}" ${cfg.voiceProvider === v ? 'selected' : ''}>${label}</option>`,
-      )
-      .join('');
-    const hostOpts = ['auto', 'windows', 'wsl']
-      .map((h) => `<option value="${h}" ${cfg.claudeHost === h ? 'selected' : ''}>${h}</option>`)
-      .join('');
-    const permOpts = [
-      ['gated', 'Ask before file/shell changes (recommended)'],
-      ['auto', 'Allow all tools without asking'],
-      ['readonly', 'Never allow file/shell changes'],
-    ]
-      .map(
-        ([v, label]) =>
-          `<option value="${v}" ${(cfg.toolPermissionMode ?? 'gated') === v ? 'selected' : ''}>${label}</option>`,
-      )
-      .join('');
-    const themeOpts = [
-      ['system', 'System'],
-      ['light', 'Light'],
-      ['dark', 'Dark'],
-    ]
-      .map(
-        ([v, label]) =>
-          `<option value="${v}" ${cfg.theme === v ? 'selected' : ''}>${label}</option>`,
-      )
-      .join('');
-    const voiceCtxOpts = [
-      ['thin', 'Thin — capabilities only'],
-      ['standard', 'Standard — + persona & orientation'],
-      ['rich', 'Rich — + sprint & memory'],
-      ['maximal', 'Maximal — + full environment'],
-    ]
-      .map(
-        ([v, label]) =>
-          `<option value="${v}" ${(cfg.voiceContextLevel ?? 'standard') === v ? 'selected' : ''}>${label}</option>`,
-      )
-      .join('');
+    const select = (key: string, current: unknown, options: [string, string][]) =>
+      `<select data-cfg="${key}">${options
+        .map(
+          ([v, label]) =>
+            `<option value="${v}" ${current === v ? 'selected' : ''}>${label}</option>`,
+        )
+        .join('')}</select>`;
+
+    // --- row shapes -------------------------------------------------------
+    const info = (name: string, hint: string) =>
+      `<div class="set__info"><div class="set__name">${name}</div><div class="set__hint">${hint}</div></div>`;
+    const row = (name: string, hint: string, ctl: string) =>
+      `<div class="set__row">${info(name, hint)}<div class="set__ctl">${ctl}</div></div>`;
+    const stack = (name: string, hint: string, ctl: string) =>
+      `<div class="set__row set__row--stack">${info(name, hint)}<div class="set__ctl">${ctl}</div></div>`;
+    const toggle = (key: string, name: string, hint: string) =>
+      `<label class="set__row set__toggle">${info(name, hint)}<input type="checkbox" data-cfg="${key}" ${checked(key)}><span class="set__switch"></span></label>`;
+    const group = (label: string, body: string) =>
+      `<section><div class="set__label">${label}</div><div class="card set__card">${body}</div></section>`;
+
     return `
-      <h2>Settings</h2>
-      <label>Assistant name<input data-cfg="assistantName" value="${str('assistantName')}"></label>
-      <label>Theme<select data-cfg="theme">${themeOpts}</select></label>
-      <label>Your name<input data-cfg="userName" value="${str('userName')}" placeholder="how it addresses you"></label>
-      <label>Personality<textarea data-cfg="personality" rows="3">${str('personality')}</textarea></label>
-      <label>Voice engine<select data-cfg="voiceProvider">${providerOpts}</select></label>
-      <label>Voice model<select data-cfg="openaiModel">${modelOpts}</select></label>
-      <label>Voice context<select data-cfg="voiceContextLevel">${voiceCtxOpts}</select></label>
-      <label>Microphone<select data-cfg="inputDeviceId">${deviceOpts('audioinput', cfg.inputDeviceId)}</select></label>
-      <label>Speaker<select data-cfg="outputDeviceId">${deviceOpts('audiooutput', cfg.outputDeviceId)}</select></label>
-      <label>Claude host<select data-cfg="claudeHost">${hostOpts}</select></label>
-      <label>Project folder<input data-cfg="claudeCwd" value="${str('claudeCwd')}" placeholder="path to the repo Claude should work in, e.g. C:\\code\\amethyst"></label>
-      <label>Repo roots (one per line)<textarea data-cfg="repoRoots" data-cfg-lines rows="2" placeholder="C:\\_repos&#10;\\\\wsl.localhost\\Ubuntu-22.04\\home\\me\\repos">${strLines('repoRoots')}</textarea></label>
-      <label>Environment notes<textarea data-cfg="envNotes" rows="2" placeholder="anything the assistant should know about your machine and folders">${str('envNotes')}</textarea></label>
-      <label>Knowledge vault folder<input data-cfg="vaultPath" value="${str('vaultPath')}" placeholder="path to your context2 / claude-obsidian vault"></label>
-      <label>Tool permissions<select data-cfg="toolPermissionMode">${permOpts}</select></label>
-      <label>Push-to-talk hotkey<input data-cfg="hotkey" data-hotkey readonly value="${str('hotkey')}" placeholder="Click, then press keys"></label>
-      <label>"Explain selection" hotkey<input data-cfg="explainHotkey" data-hotkey readonly value="${str('explainHotkey')}" placeholder="Click, then press keys"></label>
-      <label class="check"><input type="checkbox" data-cfg="wakeWordEnabled" ${checked('wakeWordEnabled')}> Always-listening wake word</label>
-      <label class="check"><input type="checkbox" data-cfg="screenAwareness" ${checked('screenAwareness')}> Let it see my screen</label>
-      <label class="check"><input type="checkbox" data-cfg="screenCaptureConsent" ${checked('screenCaptureConsent')}> Ask me before every screenshot</label>
-      <label class="check"><input type="checkbox" data-cfg="memoryEnabled" ${checked('memoryEnabled')}> Remember things about me across sessions</label>
-      <label class="check"><input type="checkbox" data-cfg="semanticMemory" ${checked('semanticMemory')}> Smarter memory search (local embeddings)</label>
-      <label class="check"><input type="checkbox" data-cfg="remindersEnabled" ${checked('remindersEnabled')}> Allow reminders</label>
-      <label class="check"><input type="checkbox" data-cfg="proactiveEnabled" ${checked('proactiveEnabled')}> Proactive heads-ups (calendar etc.)</label>
-      <label class="check"><input type="checkbox" data-cfg="activityStreamEnabled" ${checked('activityStreamEnabled')}> Show live activity feed</label>
-      <label class="check"><input type="checkbox" data-cfg="activityShowThinking" ${checked('activityShowThinking')}> Include the model's thinking in the feed</label>
-      <hr>
-      <label>OpenAI API key ${hasKey ? '<span class="ok">✓ saved</span>' : '<span class="warn">not set</span>'}
-        <span class="row"><input type="password" id="openai-key" placeholder="sk-..."><button id="save-key">Save</button></span>
-      </label>
-      <hr>
-      <label>Character card
-        <span class="row"><input type="file" id="card-file" accept="application/json"><span id="card-status"></span></span>
-      </label>
-      <p id="settings-status" class="status"></p>
+      ${group(
+        'Identity',
+        row(
+          'Assistant name',
+          'What it calls itself',
+          `<input data-cfg="assistantName" value="${str('assistantName')}">`,
+        ) +
+          row(
+            'Your name',
+            'How it addresses you',
+            `<input data-cfg="userName" value="${str('userName')}" placeholder="how it addresses you">`,
+          ) +
+          stack(
+            'Personality',
+            'Layered onto the Claude Code system prompt',
+            `<textarea data-cfg="personality" rows="3">${str('personality')}</textarea>`,
+          ) +
+          row(
+            'Character card',
+            'Import a SillyTavern chara_card_v2',
+            `<input type="file" id="card-file" accept="application/json"><span id="card-status" class="set__hint"></span>`,
+          ),
+      )}
+
+      ${group(
+        'Appearance',
+        row(
+          'Theme',
+          'Light, dark, or follow Windows',
+          select('theme', cfg['theme'], [
+            ['system', 'System'],
+            ['light', 'Light'],
+            ['dark', 'Dark'],
+          ]),
+        ),
+      )}
+
+      ${group(
+        'Model &amp; host',
+        row(
+          'Voice engine',
+          'Which provider speaks and listens',
+          select('voiceProvider', cfg['voiceProvider'], [
+            ['gpt-realtime', 'OpenAI Realtime (cloud)'],
+            ['local-cascade', 'Local cascade (offline)'],
+          ]),
+        ) +
+          row(
+            'Voice model',
+            'OpenAI Realtime model',
+            select('openaiModel', cfg['openaiModel'], [
+              ['gpt-realtime-mini', 'gpt-realtime-mini'],
+              ['gpt-realtime', 'gpt-realtime'],
+            ]),
+          ) +
+          row(
+            'Voice context',
+            'How much ambient context the voice model gets',
+            select('voiceContextLevel', cfg['voiceContextLevel'] ?? 'standard', [
+              ['thin', 'Thin — capabilities only'],
+              ['standard', 'Standard — + persona &amp; orientation'],
+              ['rich', 'Rich — + sprint &amp; memory'],
+              ['maximal', 'Maximal — + full environment'],
+            ]),
+          ) +
+          row(
+            'Claude host',
+            'Where the Claude Code backend runs',
+            select('claudeHost', cfg['claudeHost'], [
+              ['auto', 'auto'],
+              ['windows', 'windows'],
+              ['wsl', 'wsl'],
+            ]),
+          ),
+      )}
+
+      ${group(
+        'Audio',
+        row(
+          'Microphone',
+          'Input device for voice',
+          `<select data-cfg="inputDeviceId">${deviceOpts('audioinput', cfg['inputDeviceId'])}</select>`,
+        ) +
+          row(
+            'Speaker',
+            'Output device for replies',
+            `<select data-cfg="outputDeviceId">${deviceOpts('audiooutput', cfg['outputDeviceId'])}</select>`,
+          ),
+      )}
+
+      ${group(
+        'Workspace',
+        row(
+          'Project folder',
+          'The repo Claude works in by default',
+          `<input data-cfg="claudeCwd" value="${str('claudeCwd')}" placeholder="e.g. C:\\code\\amethyst">`,
+        ) +
+          stack(
+            'Repo roots',
+            'One folder per line; their subfolders are your projects',
+            `<textarea data-cfg="repoRoots" data-cfg-lines rows="2" placeholder="C:\\_repos&#10;\\\\wsl.localhost\\Ubuntu-22.04\\home\\me\\repos">${strLines('repoRoots')}</textarea>`,
+          ) +
+          stack(
+            'Environment notes',
+            'Anything it should know about your machine and folders',
+            `<textarea data-cfg="envNotes" rows="2">${str('envNotes')}</textarea>`,
+          ) +
+          row(
+            'Knowledge vault',
+            'Your context2 / claude-obsidian folder',
+            `<input data-cfg="vaultPath" value="${str('vaultPath')}" placeholder="path to your vault">`,
+          ),
+      )}
+
+      ${group(
+        'Permissions &amp; hotkeys',
+        row(
+          'Tool permissions',
+          'How file and shell changes are gated',
+          select('toolPermissionMode', cfg['toolPermissionMode'] ?? 'gated', [
+            ['gated', 'Ask before file/shell changes'],
+            ['auto', 'Allow all tools without asking'],
+            ['readonly', 'Never allow file/shell changes'],
+          ]),
+        ) +
+          row(
+            'Push-to-talk hotkey',
+            'Click the field, then press the chord',
+            `<input data-cfg="hotkey" data-hotkey readonly value="${str('hotkey')}" placeholder="Click, then press keys">`,
+          ) +
+          row(
+            '&quot;Explain selection&quot; hotkey',
+            'Acts on whatever you copied',
+            `<input data-cfg="explainHotkey" data-hotkey readonly value="${str('explainHotkey')}" placeholder="Click, then press keys">`,
+          ),
+      )}
+
+      ${group(
+        'Behaviour',
+        toggle(
+          'wakeWordEnabled',
+          'Always-listening wake word',
+          'Say its name instead of pressing the hotkey',
+        ) +
+          toggle(
+            'screenAwareness',
+            'Let it see my screen',
+            'Reads the foreground window when it needs to',
+          ) +
+          toggle(
+            'screenCaptureConsent',
+            'Ask before every screenshot',
+            'Confirm each capture individually',
+          ) +
+          toggle(
+            'memoryEnabled',
+            'Remember things about me',
+            'Durable facts and preferences across sessions',
+          ) +
+          toggle(
+            'semanticMemory',
+            'Smarter memory search',
+            'Local embeddings instead of keyword recall',
+          ) +
+          toggle('remindersEnabled', 'Allow reminders', 'Scheduled nudges it can set for you') +
+          toggle(
+            'proactiveEnabled',
+            'Proactive heads-ups',
+            'Runs watches and speaks up unprompted',
+          ) +
+          toggle(
+            'activityStreamEnabled',
+            'Show live activity feed',
+            'Stream every tool call to the Activity view',
+          ) +
+          toggle(
+            'activityShowThinking',
+            'Include the model&#39;s thinking',
+            'Show reasoning alongside tool calls',
+          ) +
+          toggle(
+            'activityAutoOpen',
+            'Switch to Activity while working',
+            'Jump to the feed when work starts, back when it settles',
+          ),
+      )}
+
+      ${group(
+        'Secrets',
+        row(
+          'OpenAI API key',
+          hasKey
+            ? '<span class="set__ok">✓ saved</span> — used for the realtime voice session'
+            : '<span class="set__warn">not set</span> — required for cloud voice',
+          `<input type="password" id="openai-key" placeholder="sk-..."><button class="btn" id="save-key" type="button">Save</button>`,
+        ),
+      )}
+
+      <section>
+        <div class="set__label set__label--danger">Danger zone</div>
+        <div class="set__danger">
+          ${info('Clear conversation', 'Permanently removes the current transcript.')}
+          <div class="set__danger-actions">
+            <button class="btn btn--warn" id="danger-ask" type="button">Clear…</button>
+            <button class="btn btn--ghost is-hidden" id="danger-cancel" type="button">Cancel</button>
+            <button class="btn btn--danger is-hidden" id="danger-now" type="button">Clear now</button>
+          </div>
+        </div>
+      </section>
+
+      <p id="settings-status" class="set__status"></p>
     `;
   }
 
@@ -207,6 +362,28 @@ export class Settings {
       } catch (err) {
         if (cardStatus) cardStatus.textContent = `Invalid card: ${String(err)}`;
       }
+    });
+
+    this.wireDangerZone();
+  }
+
+  /** Two-step clear: "Clear…" arms it, then Cancel / Clear now. */
+  private wireDangerZone(): void {
+    const ask = this.el.querySelector<HTMLElement>('#danger-ask');
+    const cancel = this.el.querySelector<HTMLElement>('#danger-cancel');
+    const now = this.el.querySelector<HTMLElement>('#danger-now');
+    if (!ask || !cancel || !now) return;
+    const arm = (armed: boolean) => {
+      ask.classList.toggle('is-hidden', armed);
+      cancel.classList.toggle('is-hidden', !armed);
+      now.classList.toggle('is-hidden', !armed);
+    };
+    ask.addEventListener('click', () => arm(true));
+    cancel.addEventListener('click', () => arm(false));
+    now.addEventListener('click', () => {
+      arm(false);
+      this.onClearConversation?.();
+      this.status('Conversation cleared.');
     });
   }
 
