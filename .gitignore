@@ -21,3 +21,4 @@ graphify-out/cost.json
 graphify-out/cache/
 .claude/projects/
 .claude/worktrees/
+plans/

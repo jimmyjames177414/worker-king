@@ -86,3 +86,9 @@ Equivalent VS Code tasks: **Run Daemon/App (Claude Logs)**, **Tail Logs**, **Tai
 breakpoints via source maps) and **Debug App (Electron main + daemon)**. Both run the `build: core`
 preLaunchTask and set `WORKERKING_LOG_FILE`, so even while you debug, the daemon tees to
 `tail-logs/app-logs/daemon.log` and Claude can `tail-logs.ps1 -Follow` alongside the debug session.
+
+## Plan Mode
+
+When ExitPlanMode is called (plan approved):
+1. Save the plan to `plans/YYYY-MM-DD-word1-word2-word3.md` at the repo root — date is today, name is at most 3 kebab-cased words summarising the feature.
+2. Ensure `plans/` is in `.gitignore` (already handled).
