@@ -33,6 +33,16 @@ export class ActivityFeed {
     const cid = step.taskId ?? step.messageId ?? '_';
     const group = this.ensureGroup(cid);
     group.lastUpdate = Date.now();
+    // A new step means the run is still alive: undo a premature stale-finalize
+    // (a long single tool call — e.g. a slow build — emits nothing between
+    // tool_use and tool_result, so the sweep can fire mid-run). Real terminal
+    // events (task.done / assistant_done) arrive only after the last step, so
+    // this never resurrects a genuinely-finished group.
+    if (!group.active) {
+      group.active = true;
+      group.root.classList.add('act-group--active');
+      group.badge.textContent = 'working';
+    }
 
     const s = step.step;
     if (s.kind === 'tool_use') {
