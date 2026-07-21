@@ -119,22 +119,30 @@ describe('SemanticMemoryIndex', () => {
 });
 
 describe('createMemoryIndex', () => {
-  it('returns the keyword index by default', async () => {
-    const index = await createMemoryIndex(fakeStore([entry('editor', 'Cursor', 'preference', 1)]));
-    expect(index).toBeInstanceOf(KeywordMemoryIndex);
+  it('returns the keyword index by default, reporting the setting as off', async () => {
+    const created = await createMemoryIndex(
+      fakeStore([entry('editor', 'Cursor', 'preference', 1)]),
+    );
+    expect(created.index).toBeInstanceOf(KeywordMemoryIndex);
+    expect(created.backend).toBe('keyword');
+    expect(created.reason).toBe('disabled');
   });
 
   it('uses the injected embedder when semantic is on', async () => {
-    const index = await createMemoryIndex(fakeStore([]), {
+    const created = await createMemoryIndex(fakeStore([]), {
       semantic: true,
       embedder: fakeEmbedder(),
     });
-    expect(index).toBeInstanceOf(SemanticMemoryIndex);
+    expect(created.index).toBeInstanceOf(SemanticMemoryIndex);
+    expect(created.backend).toBe('semantic');
+    expect(created.reason).toBeUndefined();
   });
 
   it('falls back to keyword when semantic is on but no model is available', async () => {
     // No embedder injected and the optional package isn't installed → keyword.
-    const index = await createMemoryIndex(fakeStore([]), { semantic: true });
-    expect(index).toBeInstanceOf(KeywordMemoryIndex);
+    // The REASON is what makes the settings toggle honest, so assert on it.
+    const created = await createMemoryIndex(fakeStore([]), { semantic: true });
+    expect(created.index).toBeInstanceOf(KeywordMemoryIndex);
+    expect(created.reason).toBe('unavailable');
   });
 });

@@ -4,8 +4,8 @@ import { z } from 'zod';
  * Domain types shared across every WorkerKing process.
  *
  * These are the nouns of the system: Tasks that Claude Code runs, the capability
- * manifest that tells the voice layer what WorkerKing can do, and the character
- * card that defines its name/personality/voice/avatar.
+ * manifest that tells the voice layer what WorkerKing can do, and the config that
+ * defines its name/personality/voice.
  *
  * Everything is a zod schema so it can be validated at process boundaries; the
  * inferred TypeScript type is exported alongside each schema.
@@ -142,69 +142,26 @@ export const capabilityManifestSchema = z.object({
 export type CapabilityManifest = z.infer<typeof capabilityManifestSchema>;
 
 // ---------------------------------------------------------------------------
-// Character card — SillyTavern chara_card_v2 compatible personality definition.
+// Runtime features — what the daemon actually resolved at boot.
+//
+// Some settings depend on optional packages that may not be installed. Rather
+// than let a control render as working and then silently no-op, the daemon
+// reports what it could resolve and the UI disables (with a reason) what it
+// cannot.
 // ---------------------------------------------------------------------------
 
-export const characterCardExtensionsSchema = z
-  .object({
-    workerking: z
-      .object({
-        voice: z
-          .object({
-            provider: z.enum(['gpt-realtime', 'local-cascade']),
-            voiceId: z.string(),
-          })
-          .optional(),
-        avatar: z
-          .object({
-            /** Name of a pack under resources/avatars/<pack>. */
-            pack: z.string(),
-          })
-          .optional(),
-      })
-      .optional(),
-  })
-  .passthrough();
-export type CharacterCardExtensions = z.infer<typeof characterCardExtensionsSchema>;
-
-export const characterCardV2Schema = z.object({
-  spec: z.literal('chara_card_v2'),
-  spec_version: z.literal('2.0'),
-  data: z.object({
-    name: z.string(),
-    description: z.string().default(''),
-    personality: z.string().default(''),
-    scenario: z.string().default(''),
-    first_mes: z.string().default(''),
-    mes_example: z.string().default(''),
-    /** Becomes the `append` persona layered onto Claude Code's preset prompt. */
-    system_prompt: z.string().default(''),
-    post_history_instructions: z.string().default(''),
-    extensions: characterCardExtensionsSchema.optional(),
-    /** Base64 image or a resource path. */
-    avatar: z.string().optional(),
-  }),
+export const runtimeFeaturesSchema = z.object({
+  /**
+   * Semantic memory recall:
+   *  - active: the embedding backend loaded and is in use
+   *  - available: the optional package resolves, but the setting is off
+   *  - unavailable: the optional package is missing (the toggle cannot work)
+   */
+  semanticMemory: z.enum(['active', 'available', 'unavailable']),
+  /** Offline cascade voice: whether all three optional voice packages resolve. */
+  localCascade: z.enum(['available', 'unavailable']),
 });
-export type CharacterCardV2 = z.infer<typeof characterCardV2Schema>;
-
-/**
- * The result of assembling a character card + config into runtime persona.
- */
-export const assembledPersonaSchema = z.object({
-  systemPrompt: z.object({
-    type: z.literal('preset'),
-    preset: z.literal('claude_code'),
-    append: z.string(),
-  }),
-  /** Persona string for the thin voice model (kept short). */
-  voiceSystemPrompt: z.string(),
-  voice: z.object({
-    provider: z.enum(['gpt-realtime', 'local-cascade']),
-    voiceId: z.string(),
-  }),
-  avatarPack: z.string(),
-});
-export type AssembledPersona = z.infer<typeof assembledPersonaSchema>;
+export type RuntimeFeatures = z.infer<typeof runtimeFeaturesSchema>;
 
 // ---------------------------------------------------------------------------
 // Avatar state — the companion's animation state machine.
@@ -223,6 +180,12 @@ export const watchSchema = z.object({
   prompt: z.string(),
   /** 5-field cron expression. */
   cron: z.string(),
+  /**
+   * IANA timezone the cron is evaluated in (e.g. "America/Chicago"). Omitted =
+   * the daemon's local time. Pinning it keeps a working-hours schedule honest
+   * when the machine travels or its TZ changes.
+   */
+  timezone: z.string().optional(),
   /** Shipped with WorkerKing (not user-removable) vs user-created. */
   builtin: z.boolean().optional(),
 });
@@ -317,10 +280,8 @@ export const workerKingConfigSchema = z
     inputDeviceId: z.string().optional(),
     /** Preferred audio-output deviceId (empty/undefined = system default). */
     outputDeviceId: z.string().optional(),
-    /** The user's display name, for {{user}} in character cards. */
+    /** The user's display name — how the assistant addresses them. */
     userName: z.string().optional(),
-    /** Active SillyTavern chara_card_v2 (object), if the user imported one. */
-    characterCard: z.unknown().optional(),
     /**
      * Directories whose subfolders are the user's repos/projects (Windows paths
      * and \\wsl.localhost UNC paths both work). The brain gets these — plus a

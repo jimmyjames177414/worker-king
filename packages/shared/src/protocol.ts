@@ -8,6 +8,7 @@ import {
   conversationMessageSchema,
   conversationSummarySchema,
   watchSchema,
+  runtimeFeaturesSchema,
 } from './domain.js';
 
 /**
@@ -157,6 +158,12 @@ const watchesListPayload = z.object({});
 const watchesListResultPayload = z.object({ watches: z.array(watchSchema) });
 const watchesAddPayload = z.object({ prompt: z.string(), cron: z.string() });
 const watchesRemovePayload = z.object({ id: z.string() });
+
+// Runtime feature availability (renderer request -> daemon result). Lets the
+// settings UI disable a control the daemon could not actually resolve, with the
+// reason, instead of rendering it as working.
+const runtimeFeaturesPayload = z.object({});
+const runtimeFeaturesResultPayload = z.object({ features: runtimeFeaturesSchema });
 const taskProgressPayload = z.object({
   taskId: z.string(),
   progress: taskProgressSchema,
@@ -256,6 +263,9 @@ export const payloadSchemas = {
   'watches.list_result': watchesListResultPayload,
   'watches.add': watchesAddPayload,
   'watches.remove': watchesRemovePayload,
+
+  'runtime.features': runtimeFeaturesPayload,
+  'runtime.features_result': runtimeFeaturesResultPayload,
 
   'config.get': configGetPayload,
   'config.set': configSetPayload,

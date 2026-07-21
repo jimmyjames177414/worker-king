@@ -359,6 +359,34 @@ export function buildSprintStateTool(): SdkMcpToolDefinition<Record<string, neve
   );
 }
 
+/**
+ * The `get_standup_diff` tool: what changed in the last ADO fetch (new / closed /
+ * reassigned / changed / unknownGone). Step 2 of the standup protocol narrates
+ * from this; without it Claude would need filesystem access to the Sprint repo's
+ * `state/diff.json`, which is a WSL path the daemon may not even share.
+ */
+export function buildSprintDiffTool(): SdkMcpToolDefinition<Record<string, never>> {
+  return tool(
+    'get_standup_diff',
+    'Get what changed in the most recent sprint fetch: new, closed, reassigned, changed and ' +
+      'unknownGone work items, plus whether the corruption guard tripped. Use alongside ' +
+      'get_standup_state when giving the morning standup briefing.',
+    {},
+    async () => {
+      try {
+        const res = await fetch('http://127.0.0.1:5757/api/diff', {
+          signal: AbortSignal.timeout(3000),
+        });
+        if (res.status === 404) return errorResult('No diff yet — the fetcher has not run today.');
+        if (!res.ok) return errorResult(`Sprint API returned ${res.status}.`);
+        return textResult(untrusted('sprint-standup-diff', await res.text()));
+      } catch {
+        return errorResult('Sprint dashboard is not running (http://127.0.0.1:5757 unreachable).');
+      }
+    },
+  );
+}
+
 /** The MCP server config to hand to ClaudeBackend `mcpServers`. */
 export function createWorkerKingToolServer(deps: WorkerKingToolDeps): McpServerConfig {
   const { getActiveWindow, captureScreen } = buildScreenTools(deps);
@@ -367,6 +395,7 @@ export function createWorkerKingToolServer(deps: WorkerKingToolDeps): McpServerC
     getActiveWindow,
     captureScreen,
     buildSprintStateTool(),
+    buildSprintDiffTool(),
   ];
   if (deps.memory)
     tools.push(buildMemoryTool(deps), buildRecallTool(deps), buildListMemoriesTool(deps));
@@ -379,11 +408,34 @@ export function createWorkerKingToolServer(deps: WorkerKingToolDeps): McpServerC
   });
 }
 
+/**
+ * The tool server for UNATTENDED background brains (proactive watches): exactly
+ * one read-only tool, `get_standup_state`.
+ *
+ * Deliberately not `createWorkerKingToolServer`. Background brains run under the
+ * 'readonly' policy, and `isReadonlySafe` blanket-allows every `mcp__*` name —
+ * so handing them the full server would give a scheduled prompt with nobody
+ * watching access to `capture_screen`, `remember` and `notify`. Scoping the
+ * SERVER rather than the policy means nothing else is reachable however the
+ * policy resolves. It also has no deps: nothing to wire, nothing to leak.
+ */
+export function createBackgroundToolServer(): McpServerConfig {
+  return createSdkMcpServer({
+    name: WORKERKING_MCP_SERVER_NAME,
+    version: '0.0.0',
+    tools: [buildSprintStateTool()],
+  });
+}
+
+/** The one tool a background brain may call without a prompt. */
+export const BACKGROUND_TOOL_ALLOWLIST = [`mcp__${WORKERKING_MCP_SERVER_NAME}__get_standup_state`];
+
 /** Tool names to allow without a permission prompt. */
 export const WORKERKING_TOOL_ALLOWLIST = [
   `mcp__${WORKERKING_MCP_SERVER_NAME}__get_active_window`,
   `mcp__${WORKERKING_MCP_SERVER_NAME}__capture_screen`,
   `mcp__${WORKERKING_MCP_SERVER_NAME}__get_standup_state`,
+  `mcp__${WORKERKING_MCP_SERVER_NAME}__get_standup_diff`,
   `mcp__${WORKERKING_MCP_SERVER_NAME}__remember`,
   `mcp__${WORKERKING_MCP_SERVER_NAME}__recall`,
   `mcp__${WORKERKING_MCP_SERVER_NAME}__list_memories`,

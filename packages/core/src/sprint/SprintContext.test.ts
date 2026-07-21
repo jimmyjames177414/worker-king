@@ -100,16 +100,17 @@ describe('SprintContext.sprintBlock', () => {
     expect(block).toContain('Sprint standup context');
   });
 
+  it('shares one in-flight refresh between concurrent callers', async () => {
+    const spy = mockFetch(200, FULL_STATE);
+    const ctx = new SprintContext();
+    await Promise.all([ctx.refresh(), ctx.refresh(), ctx.refresh()]);
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
   it('truncates focus list beyond 3 items', async () => {
     mockFetch(200, {
       ...FULL_STATE,
-      focus: [
-        { label: 'A' },
-        { label: 'B' },
-        { label: 'C' },
-        { label: 'D' },
-        { label: 'E' },
-      ],
+      focus: [{ label: 'A' }, { label: 'B' }, { label: 'C' }, { label: 'D' }, { label: 'E' }],
     });
     const ctx = new SprintContext();
     await ctx.refresh();
@@ -119,5 +120,83 @@ describe('SprintContext.sprintBlock', () => {
     // rather than a bare 'D', which would also match the 'D' in "Last ADO fetch".
     expect(block).not.toContain('- D');
     expect(block).not.toContain('- E');
+  });
+});
+
+/**
+ * The standup fetch. `POST /api/refresh` is fire-and-forget (202) so completion
+ * is detected by `staleness.lastFetch` moving — these drive that state machine
+ * with a scripted fetch rather than a real dashboard.
+ */
+describe('SprintContext.runMorningFetch', () => {
+  const BEFORE = { ...FULL_STATE, staleness: { lastFetch: 'T1', lastFetchOk: true } };
+  const AFTER = { ...FULL_STATE, staleness: { lastFetch: 'T2', lastFetchOk: true } };
+
+  /** Serve /api/state from a queue of bodies; /api/refresh returns `refreshStatus`. */
+  function scriptedFetch(states: unknown[], refreshStatus = 202) {
+    const calls: string[] = [];
+    const impl = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const u = String(url);
+      calls.push(`${init?.method ?? 'GET'} ${u}`);
+      if (u.endsWith('/api/refresh')) {
+        return {
+          ok: refreshStatus >= 200 && refreshStatus < 300,
+          status: refreshStatus,
+        } as Response;
+      }
+      const body = states.length > 1 ? states.shift() : states[0];
+      return { ok: true, status: 200, json: () => Promise.resolve(body) } as Response;
+    });
+    return { impl: impl as unknown as typeof globalThis.fetch, calls };
+  }
+
+  function ctxWith(impl: typeof globalThis.fetch) {
+    return new SprintContext({
+      fetchImpl: impl,
+      pollMs: 0,
+      fetchTimeoutMs: 1_000,
+      sleep: () => Promise.resolve(),
+    });
+  }
+
+  it('posts the refresh and waits for lastFetch to move', async () => {
+    const { impl, calls } = scriptedFetch([BEFORE, AFTER]);
+    const result = await ctxWith(impl).runMorningFetch();
+    expect(result.status).toBe('refreshed');
+    expect(result.lastFetch).toBe('T2');
+    expect(calls).toContain('POST http://127.0.0.1:5757/api/refresh');
+  });
+
+  it('treats a 409 as "someone else is already fetching" and waits for that run', async () => {
+    const { impl } = scriptedFetch([BEFORE, AFTER], 409);
+    const result = await ctxWith(impl).runMorningFetch();
+    expect(result.status).toBe('refreshed');
+  });
+
+  it('reports stale when the fetch never lands inside the budget', async () => {
+    const { impl } = scriptedFetch([BEFORE]); // lastFetch never moves
+    const result = await ctxWith(impl).runMorningFetch();
+    expect(result.status).toBe('stale');
+  });
+
+  it('reports unreachable when the dashboard is down', async () => {
+    const impl = vi.fn().mockRejectedValue(new Error('ECONNREFUSED'));
+    const result = await ctxWith(impl as unknown as typeof globalThis.fetch).runMorningFetch();
+    expect(result.status).toBe('unreachable');
+  });
+
+  it('never runs two fetches at once — a second "morning" joins the first', async () => {
+    const { impl, calls } = scriptedFetch([BEFORE, AFTER]);
+    const ctx = ctxWith(impl);
+    const [a, b] = await Promise.all([ctx.runMorningFetch(), ctx.runMorningFetch()]);
+    expect(a).toEqual(b);
+    expect(calls.filter((c) => c.includes('/api/refresh'))).toHaveLength(1);
+  });
+
+  it('rebuilds the cached block from post-fetch data', async () => {
+    const { impl } = scriptedFetch([BEFORE, { ...AFTER, sprint: { name: 'Sprint 43' } }]);
+    const ctx = ctxWith(impl);
+    await ctx.runMorningFetch();
+    expect(ctx.sprintBlock()).toContain('Sprint 43');
   });
 });

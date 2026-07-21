@@ -1,14 +1,20 @@
 import { writeFileSync } from 'node:fs';
 import { basename } from 'node:path';
-import type { PayloadOf, CapabilityManifest } from '@workerking/shared';
+import type { PayloadOf, CapabilityManifest, RuntimeFeatures } from '@workerking/shared';
 import { WsServer } from './ws/server.js';
 import { ConfigStore } from './config/ConfigStore.js';
 import { Supervisor } from './supervisor/Supervisor.js';
 import { EchoBrain, DeferredBrain, type Brain } from './brain/Brain.js';
-import { createClaudeBackend, probeClaude, type ClaudeBackendOptions } from './claude/createClaudeBackend.js';
+import {
+  createClaudeBackend,
+  probeClaude,
+  type ClaudeBackendOptions,
+} from './claude/createClaudeBackend.js';
 import {
   createWorkerKingToolServer,
+  createBackgroundToolServer,
   untrusted,
+  BACKGROUND_TOOL_ALLOWLIST,
   WORKERKING_TOOL_ALLOWLIST,
 } from './claude/tools.js';
 import { createToolPolicy, summarizeToolCall } from './claude/toolPolicy.js';
@@ -19,7 +25,6 @@ import { CapabilityManager } from './capability/CapabilityManager.js';
 import { realCapabilityQueryFn } from './capability/realCapabilityQuery.js';
 import { computeVoiceContext, type VoiceContextLevel } from './voice/VoiceContext.js';
 import { assemblePersonaAppend } from './persona/assemblePersona.js';
-import { assemblePersonaFromCard, parseCharacterCard } from './persona/CharacterCard.js';
 import { MemoryStore } from './memory/MemoryStore.js';
 import { createMemoryIndex } from './memory/MemoryIndex.js';
 import { InteractionLog } from './memory/InteractionLog.js';
@@ -34,6 +39,8 @@ import { EnvironmentContext } from './environment/EnvironmentContext.js';
 import { VaultContext } from './environment/VaultContext.js';
 import { SprintContext } from './sprint/SprintContext.js';
 import { SprintWatcher } from './sprint/SprintWatcher.js';
+import { morningProtocolBlock } from './sprint/morning.js';
+import { probeRuntimeFeatures, semanticMemoryStatus } from './runtime/features.js';
 import { detectHost } from './util/host.js';
 import { daemonEnvelopeContext, newToken } from './util/ids.js';
 import { installFileLog } from './util/fileLog.js';
@@ -112,11 +119,6 @@ export interface RunningDaemon {
  * and the user sees a hint to run `claude login`). Never throws — the daemon must
  * not crash on a Claude auth/setup failure.
  */
-/**
- * Compute the current persona append from config: a character card if one is
- * imported (Handlebars-assembled), else the simple name+personality form. Read
- * live per message so settings/card changes apply without a restart.
- */
 /** Live context sources folded into the assembled system prompt each message. */
 export interface PersonaContext {
   memory?: Pick<MemoryStore, 'summary'>;
@@ -129,7 +131,7 @@ export interface PersonaContext {
   /** Global knowledge vault (context2) excerpts + usage rules. */
   vault?: Pick<VaultContext, 'vaultBlock'>;
   /** Compact sprint/standup summary from the local Sprint dashboard. */
-  sprint?: Pick<SprintContext, 'sprintBlock'>;
+  sprint?: Pick<SprintContext, 'sprintBlock' | 'lastMorningFetch'>;
   /** Clock, injectable for tests. */
   now?: () => Date;
 }
@@ -159,23 +161,23 @@ function buildAmbientContext(ctx: PersonaContext): string {
   const vault = ctx.vault?.vaultBlock();
   if (vault) lines.push(vault);
   const sprint = ctx.sprint?.sprintBlock();
-  if (sprint) lines.push(sprint);
+  if (sprint) {
+    lines.push(sprint);
+    // The standup protocol travels with the sprint data so "morning" works in
+    // any working directory. It can't come from ~/.claude/CLAUDE.md the way a
+    // normal Claude Code session gets it — ClaudeBackend runs with
+    // `settingSources: []` and never loads user/project settings.
+    lines.push(morningProtocolBlock(ctx.sprint?.lastMorningFetch()));
+  }
   return lines.length ? `Ambient context:\n${lines.join('\n')}` : '';
 }
 
+/**
+ * Compute the current persona append from config (name + personality), read live
+ * per message so a settings change applies without a restart.
+ */
 export function computePersonaAppend(config: ConfigStore, ctx: PersonaContext = {}): string {
-  let base: string;
-  const card = config.get('characterCard');
-  if (card) {
-    try {
-      const userName = config.get('userName') as string | undefined;
-      base = assemblePersonaFromCard(parseCharacterCard(card), { userName }).systemPrompt.append;
-    } catch {
-      base = assemblePersonaAppend(config.get());
-    }
-  } else {
-    base = assemblePersonaAppend(config.get());
-  }
+  const base = assemblePersonaAppend(config.get());
 
   // Layer: persona → self-authoring nudge → remembered facts → ambient context.
   const parts = [base, SELF_AUTHOR_NUDGE];
@@ -229,6 +231,12 @@ async function resolveBrain(
   proactiveHolder: { manager?: ProactiveManager } = {},
   /** Shared with the Supervisor (folder resolution) — built in startDaemon. */
   orientation?: { environment: EnvironmentContext; vault: VaultContext; sprint?: SprintContext },
+  /**
+   * Live feature record the Supervisor serves over `runtime.features`. Mutated
+   * here with what actually resolved, so the UI reports the real outcome rather
+   * than the boot-time guess.
+   */
+  features?: RuntimeFeatures,
 ): Promise<void> {
   const { memory, interactionLog, watchStore, reminderStore, conversations } = deps;
   const cwd = config.get('claudeCwd') as string | undefined;
@@ -281,9 +289,21 @@ async function resolveBrain(
 
   // Retrieval backend for recall/list_memories: semantic if enabled + model present,
   // else keyword. Built once (embedding-model init is expensive); reads the store live.
-  const memoryIndex = await createMemoryIndex(memory, {
+  const createdIndex = await createMemoryIndex(memory, {
     semantic: config.get('semanticMemory') === true,
   });
+  const memoryIndex = createdIndex.index;
+  // Record what we actually got: 'semantic requested but no model installed' is a
+  // silent downgrade, and the settings toggle must say so instead of lying.
+  if (features) features.semanticMemory = semanticMemoryStatus(createdIndex);
+  if (createdIndex.reason === 'unavailable') {
+    log.warn(
+      'semantic memory requested but no embedding model is installed; using keyword recall',
+      {
+        hint: 'pnpm add @huggingface/transformers (in @workerking/core) to enable it',
+      },
+    );
+  }
 
   // Screen-awareness + memory + proactive tools (capture runs in Electron main).
   const captureConfirmer = new WsToolConfirmer(server);
@@ -339,19 +359,14 @@ async function resolveBrain(
     let lastManifest: CapabilityManifest | undefined;
     let lastVoicePrompt: string | undefined;
 
-    // Short voice persona: the character card's voice line, else name+personality.
+    /** What the assistant calls itself; the voice base prompt uses it too. */
+    const assistantName = (): string =>
+      (config.get('assistantName') as string | undefined)?.trim() || 'WorkerKing';
+
+    // Short voice persona: name + personality.
     const voicePersona = (): string => {
-      const card = config.get('characterCard');
-      if (card) {
-        try {
-          const userName = config.get('userName') as string | undefined;
-          return assemblePersonaFromCard(parseCharacterCard(card), { userName }).voiceSystemPrompt;
-        } catch {
-          // fall through to the simple persona
-        }
-      }
       const cfg = config.get();
-      const name = (cfg.assistantName as string | undefined)?.trim() || 'WorkerKing';
+      const name = assistantName();
       const personality = (cfg.personality as string | undefined)?.trim();
       return [`You are ${name}.`, personality, 'Keep spoken replies short and natural.']
         .filter(Boolean)
@@ -382,8 +397,10 @@ async function resolveBrain(
     // and push it to the overlay, which uses it at session start and hot-patches
     // a live session. Cheap; recompute on any input change.
     const recomputeVoiceContext = () => {
-      const level = (config.get('voiceContextLevel') as VoiceContextLevel | undefined) ?? 'standard';
+      const level =
+        (config.get('voiceContextLevel') as VoiceContextLevel | undefined) ?? 'standard';
       const systemPrompt = computeVoiceContext(level, {
+        assistantName: assistantName(),
         capabilitySummary: lastManifest?.voiceSummary,
         persona: voicePersona(),
         orientation: voiceOrientation(),
@@ -419,14 +436,15 @@ async function resolveBrain(
       'voiceContextLevel',
       'assistantName',
       'personality',
-      'characterCard',
       'userName',
       'claudeCwd',
       'repoRoots',
       'envNotes',
       'memoryEnabled',
     ]);
-    registerDisposable({ stop: config.onChange((key) => VOICE_KEYS.has(key) && recomputeVoiceContext()) });
+    registerDisposable({
+      stop: config.onChange((key) => VOICE_KEYS.has(key) && recomputeVoiceContext()),
+    });
     // Sprint/memory drift: refresh periodically so a new session (or live patch)
     // reflects them without waiting for a config/capability change.
     const voiceTimer = setInterval(recomputeVoiceContext, 5 * 60_000);
@@ -451,9 +469,19 @@ async function resolveBrain(
 
     // Proactive/ambient watches (spends Claude quota on a timer) — opt-in.
     if (config.get('proactiveEnabled') === true) {
+      // Watches need at least one tool to be worth running at all: with none,
+      // every tick is a Claude call that can only ever answer NONE. They get the
+      // minimal read-only server (sprint state), never the full toolset — see
+      // createBackgroundToolServer for why the scoping is on the server.
+      const backgroundToolServer = createBackgroundToolServer();
       const manager = new ProactiveManager({
         respond: (prompt) =>
-          createClaudeBackend({ cwd, canUseTool: backgroundCanUseTool }).respond(prompt, () => {}),
+          createClaudeBackend({
+            cwd,
+            canUseTool: backgroundCanUseTool,
+            mcpServers: { workerking: backgroundToolServer } as ClaudeBackendOptions['mcpServers'],
+            allowedTools: BACKGROUND_TOOL_ALLOWLIST,
+          }).respond(prompt, () => {}),
         notify: proactiveNotify,
         watches: composeWatches(watchStore),
       });
@@ -534,6 +562,10 @@ export async function startDaemon(opts: StartDaemonOptions = {}): Promise<Runnin
   });
   // Compact sprint summary injected into Claude's persona — silent when Sprint is not running.
   const sprint = new SprintContext();
+  // What optional, off-by-default features this daemon can actually reach. Seeded
+  // from a package probe now and corrected by resolveBrain with what really
+  // loaded, so Settings can disable a control instead of letting it no-op.
+  const features = probeRuntimeFeatures();
   // Tracks the async brain resolution so stop() can wait for late-registered
   // disposables (capability manager / nightly job / proactive) to exist first.
   let brainReady: Promise<void> = Promise.resolve();
@@ -557,6 +589,7 @@ export async function startDaemon(opts: StartDaemonOptions = {}): Promise<Runnin
       deps,
       proactiveHolder,
       { environment, vault, sprint },
+      features,
     ).catch((err) => {
       // Never silent: without this log a boot-time failure (bad watch, memory
       // index init, …) is invisible; without the fallback every chat message
@@ -578,6 +611,8 @@ export async function startDaemon(opts: StartDaemonOptions = {}): Promise<Runnin
     log,
     deps.taskStore,
     environment,
+    sprint,
+    () => features,
   );
 
   const requestedPort =

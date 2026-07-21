@@ -1,4 +1,4 @@
-import { characterCardV2Schema } from '@workerking/shared';
+import type { RuntimeFeatures } from '@workerking/shared';
 import { formatAccelerator } from './accelerator.js';
 
 /** The chat preload bridge surface Settings needs. */
@@ -7,12 +7,32 @@ export interface SettingsBridge {
   setConfig(key: string, value: unknown): Promise<void>;
   setSecret(key: string, value: string): Promise<void>;
   hasSecret(key: string): Promise<boolean>;
+  /**
+   * What the daemon could actually resolve (optional packages). Absent when
+   * there's no daemon connection — then nothing is disabled, see loadFeatures().
+   */
+  getFeatures?(): Promise<RuntimeFeatures>;
 }
 
 /**
+ * Assume everything works when the daemon can't be asked. Guessing 'unavailable'
+ * would grey out working controls — the same dishonesty, pointed the other way.
+ */
+const FEATURES_UNKNOWN: RuntimeFeatures = {
+  semanticMemory: 'available',
+  localCascade: 'available',
+};
+
+/**
  * Settings view — the configurable-in-all-aspects surface: name, personality,
- * voice, model, hotkey, toggles, OpenAI key entry, and character-card import.
+ * voice, model, hotkey, toggles, integrations, and OpenAI key entry.
  * Writes go through the bridge → main (persist) → daemon (live reload).
+ *
+ * Two rules the page is built around, both learned from controls that lied:
+ *  - A setting that cannot work here renders DISABLED with the reason in its
+ *    hint (see `runtime.features`), never as a toggle that saves and no-ops.
+ *  - A setting that only takes effect under another one renders as its child and
+ *    disables with it, rather than as a flat sibling implying independence.
  *
  * The markup is card sections, but the contract `wire()` binds against is
  * unchanged: every control still carries `data-cfg` (plus `data-cfg-lines` for
@@ -27,10 +47,13 @@ export class Settings {
   ) {}
 
   async render(): Promise<void> {
-    const cfg = await this.bridge.getConfig();
-    const hasKey = await this.bridge.hasSecret('openai');
-    const devices = await this.enumerateDevices();
-    this.el.innerHTML = this.template(cfg, hasKey, devices);
+    const [cfg, hasKey, devices, features] = await Promise.all([
+      this.bridge.getConfig(),
+      this.bridge.hasSecret('openai'),
+      this.enumerateDevices(),
+      this.loadFeatures(),
+    ]);
+    this.el.innerHTML = this.template(cfg, hasKey, devices, features);
     this.wire();
   }
 
@@ -42,10 +65,19 @@ export class Settings {
     }
   }
 
+  private async loadFeatures(): Promise<RuntimeFeatures> {
+    try {
+      return (await this.bridge.getFeatures?.()) ?? FEATURES_UNKNOWN;
+    } catch {
+      return FEATURES_UNKNOWN; // daemon down / timed out — don't disable anything
+    }
+  }
+
   private template(
     cfg: Record<string, unknown>,
     hasKey: boolean,
     devices: MediaDeviceInfo[],
+    features: RuntimeFeatures,
   ): string {
     const str = (k: string) => escapeHtml(String(cfg[k] ?? ''));
     const checked = (k: string) => (cfg[k] === true ? 'checked' : '');
@@ -61,11 +93,12 @@ export class Settings {
         );
       return `<option value="" ${selected ? '' : 'selected'}>System default</option>${opts.join('')}`;
     };
-    const select = (key: string, current: unknown, options: [string, string][]) =>
+    /** Options are [value, label] or [value, label, disabled]. */
+    const select = (key: string, current: unknown, options: [string, string, boolean?][]) =>
       `<select data-cfg="${key}">${options
         .map(
-          ([v, label]) =>
-            `<option value="${v}" ${current === v ? 'selected' : ''}>${label}</option>`,
+          ([v, label, disabled]) =>
+            `<option value="${v}" ${current === v ? 'selected' : ''} ${disabled ? 'disabled' : ''}>${label}</option>`,
         )
         .join('')}</select>`;
 
@@ -76,10 +109,27 @@ export class Settings {
       `<div class="set__row">${info(name, hint)}<div class="set__ctl">${ctl}</div></div>`;
     const stack = (name: string, hint: string, ctl: string) =>
       `<div class="set__row set__row--stack">${info(name, hint)}<div class="set__ctl">${ctl}</div></div>`;
-    const toggle = (key: string, name: string, hint: string) =>
-      `<label class="set__row set__toggle">${info(name, hint)}<input type="checkbox" data-cfg="${key}" ${checked(key)}><span class="set__switch"></span></label>`;
+    /**
+     * `sub` is the config key of the parent toggle this one belongs to: it
+     * indents, and `wire()` keeps it disabled while the parent is off.
+     * `disabled` is for a feature the daemon reported it cannot run at all.
+     */
+    const toggle = (
+      key: string,
+      name: string,
+      hint: string,
+      opts: { sub?: string; disabled?: boolean } = {},
+    ) =>
+      `<label class="set__row set__toggle${opts.sub ? ' set__row--sub' : ''}${opts.disabled ? ' is-disabled' : ''}"${
+        opts.sub ? ` data-parent="${opts.sub}"` : ''
+      }>${info(name, hint)}<input type="checkbox" data-cfg="${key}" ${checked(key)}${
+        opts.disabled ? ' disabled data-unavailable' : ''
+      }><span class="set__switch"></span></label>`;
     const group = (label: string, body: string) =>
       `<section><div class="set__label">${label}</div><div class="card set__card">${body}</div></section>`;
+
+    const semanticOk = features.semanticMemory !== 'unavailable';
+    const cascadeOk = features.localCascade !== 'unavailable';
 
     return `
       ${group(
@@ -98,11 +148,6 @@ export class Settings {
             'Personality',
             'Layered onto the Claude Code system prompt',
             `<textarea data-cfg="personality" rows="3">${str('personality')}</textarea>`,
-          ) +
-          row(
-            'Character card',
-            'Import a SillyTavern chara_card_v2',
-            `<input type="file" id="card-file" accept="application/json"><span id="card-status" class="set__hint"></span>`,
           ),
       )}
 
@@ -123,10 +168,18 @@ export class Settings {
         'Model &amp; host',
         row(
           'Voice engine',
-          'Which provider speaks and listens',
+          cascadeOk
+            ? 'Which provider speaks and listens'
+            : 'Which provider speaks and listens. <span class="set__warn">Local cascade is unavailable</span> — ' +
+                'it needs @ricky0123/vad-web, @huggingface/transformers and kokoro-js, and even installed it has ' +
+                'no voice tools, so every utterance costs a full Claude turn.',
           select('voiceProvider', cfg['voiceProvider'], [
             ['gpt-realtime', 'OpenAI Realtime (cloud)'],
-            ['local-cascade', 'Local cascade (offline)'],
+            [
+              'local-cascade',
+              cascadeOk ? 'Local cascade (offline)' : 'Local cascade (offline) — not installed',
+              !cascadeOk,
+            ],
           ]),
         ) +
           row(
@@ -235,6 +288,7 @@ export class Settings {
             'screenCaptureConsent',
             'Ask before every screenshot',
             'Confirm each capture individually',
+            { sub: 'screenAwareness' },
           ) +
           toggle(
             'memoryEnabled',
@@ -244,7 +298,10 @@ export class Settings {
           toggle(
             'semanticMemory',
             'Smarter memory search',
-            'Local embeddings instead of keyword recall',
+            semanticOk
+              ? 'Local embeddings instead of keyword recall'
+              : '<span class="set__warn">Unavailable</span> — needs the @huggingface/transformers package',
+            { sub: 'memoryEnabled', disabled: !semanticOk },
           ) +
           toggle('remindersEnabled', 'Allow reminders', 'Scheduled nudges it can set for you') +
           toggle(
@@ -261,11 +318,28 @@ export class Settings {
             'activityShowThinking',
             'Include the model&#39;s thinking',
             'Show reasoning alongside tool calls',
+            { sub: 'activityStreamEnabled' },
           ) +
           toggle(
             'activityAutoOpen',
             'Switch to Activity while working',
             'Jump to the feed when work starts, back when it settles',
+            { sub: 'activityStreamEnabled' },
+          ),
+      )}
+
+      ${group(
+        'Integrations',
+        toggle(
+          'localTranscriberEnabled',
+          'LocalTranscriber',
+          'Meeting transcription tools. Needs <code>dotnet build</code> in the project below, ' +
+            'and a daemon restart to take effect.',
+        ) +
+          row(
+            'LocalTranscriber project',
+            'Path passed to <code>dotnet run --project</code>',
+            `<input data-cfg="localTranscriberPath" value="${str('localTranscriberPath')}" placeholder="C:/_repos/LocalTranscriber/src/LocalTranscriber.Mcp">`,
           ),
       )}
 
@@ -313,9 +387,13 @@ export class Settings {
                 .map((l) => l.trim())
                 .filter(Boolean)
             : input.value;
+        // A parent toggle flipping enables/disables its children immediately —
+        // re-rendering instead would drop focus and the status line.
+        if (isCheckbox) this.syncSubToggles();
         void this.bridge.setConfig(key, value).then(() => this.status(`Saved ${key}.`));
       });
     });
+    this.syncSubToggles();
 
     // Hotkey fields: click to record, then capture the next chord as an accelerator.
     this.el.querySelectorAll<HTMLInputElement>('input[data-hotkey]').forEach((input) => {
@@ -348,23 +426,23 @@ export class Settings {
       });
     });
 
-    // Character-card import: read → validate → set as active persona.
-    const cardStatus = this.el.querySelector('#card-status');
-    this.el.querySelector<HTMLInputElement>('#card-file')?.addEventListener('change', async (e) => {
-      const file = (e.target as HTMLInputElement).files?.[0];
-      if (!file) return;
-      try {
-        const card = characterCardV2Schema.parse(JSON.parse(await file.text()));
-        await this.bridge.setConfig('characterCard', card);
-        await this.bridge.setConfig('assistantName', card.data.name);
-        if (cardStatus) cardStatus.textContent = `Loaded "${card.data.name}"`;
-        void this.render();
-      } catch (err) {
-        if (cardStatus) cardStatus.textContent = `Invalid card: ${String(err)}`;
-      }
-    });
-
     this.wireDangerZone();
+  }
+
+  /**
+   * A sub-toggle does nothing while its parent is off, so show that: disable it
+   * and dim the row. Never re-enables a control the daemon marked unavailable.
+   */
+  private syncSubToggles(): void {
+    this.el.querySelectorAll<HTMLElement>('[data-parent]').forEach((row) => {
+      const parent = this.el.querySelector<HTMLInputElement>(
+        `input[data-cfg="${row.dataset.parent}"]`,
+      );
+      const input = row.querySelector<HTMLInputElement>('input[data-cfg]');
+      if (!parent || !input) return;
+      input.disabled = !parent.checked || input.hasAttribute('data-unavailable');
+      row.classList.toggle('is-disabled', input.disabled);
+    });
   }
 
   /** Two-step clear: "Clear…" arms it, then Cancel / Clear now. */

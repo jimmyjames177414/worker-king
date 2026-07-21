@@ -13,7 +13,7 @@ import { HistoryView } from './views/HistoryView.js';
 import { WatchesView } from './views/WatchesView.js';
 import { TasksView } from './views/TasksView.js';
 import { dayStamp, sameDay } from './relTime.js';
-import type { CapabilityManifestEntry } from '@workerking/shared';
+import type { CapabilityManifestEntry, PayloadOf } from '@workerking/shared';
 
 /**
  * Chat renderer entry.
@@ -169,9 +169,20 @@ async function main(): Promise<void> {
     return;
   }
 
+  // Settings talks to main over IPC for config/secrets, but feature availability
+  // is the daemon's answer — so that one question rides the WS bus.
   const settings = new Settings(
     document.getElementById('settings-body')!,
-    bridge,
+    {
+      getConfig: () => bridge.getConfig(),
+      setConfig: (key, value) => bridge.setConfig(key, value),
+      setSecret: (key, value) => bridge.setSecret(key, value),
+      hasSecret: (key) => bridge.hasSecret(key),
+      getFeatures: async () => {
+        const env = await client.request('runtime.features', {}, 5000);
+        return (env.payload as PayloadOf<'runtime.features_result'>).features;
+      },
+    },
     clearConversation,
   );
 

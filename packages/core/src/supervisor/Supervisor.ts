@@ -16,9 +16,11 @@ import type { InteractionLog } from '../memory/InteractionLog.js';
 import type { ConversationStore } from '../history/ConversationStore.js';
 import type { WatchStore } from '../proactive/WatchStore.js';
 import { composeWatches } from '../proactive/ProactiveManager.js';
-import type { Watch } from '@workerking/shared';
+import type { RuntimeFeatures, Watch } from '@workerking/shared';
 import type { Logger } from '../util/logger.js';
 import type { EnvironmentContext } from '../environment/EnvironmentContext.js';
+import type { SprintContext } from '../sprint/SprintContext.js';
+import { isMorningTrigger } from '../sprint/morning.js';
 
 /** How the Supervisor manages proactive watches (persist + live reload). */
 export interface WatchDeps {
@@ -61,6 +63,14 @@ export class Supervisor {
     taskStore?: TaskStore,
     /** Repo-root resolver backing delegate_to_worker's `folder` argument. */
     private readonly environment?: Pick<EnvironmentContext, 'resolveRepoPath'>,
+    /** Standup fetch behind the "morning" trigger; absent when Sprint isn't wired. */
+    private readonly sprint?: Pick<SprintContext, 'runMorningFetch'>,
+    /**
+     * What optional features the daemon actually resolved, read live (the memory
+     * backend is only known once the brain resolves). Lets Settings disable a
+     * control that cannot work here rather than letting it silently no-op.
+     */
+    private readonly features?: () => RuntimeFeatures,
   ) {
     // TaskManager drives delegated (voice) work; its events become task.* broadcasts.
     this.tasks = new TaskManager({
@@ -109,6 +119,28 @@ export class Supervisor {
     this.config.onChange((key, value) => {
       this.server.broadcast('config.changed', { key, value });
     });
+  }
+
+  /**
+   * Step 1 of the standup protocol, for any message that *is* the trigger.
+   *
+   * Run here rather than left to Claude for two reasons: the fetch is
+   * deterministic (no judgment involved), and doing it in one place means the
+   * turn can't race a second `fetch.js` writing state.json. SprintContext
+   * single-flights it further, so two quick "morning"s share one fetch. Awaited
+   * — the whole point is that Claude reads post-fetch state — but never allowed
+   * to fail the turn: a dead dashboard degrades to a stale briefing that says so.
+   */
+  private async maybeRunStandupFetch(text: string, turnId: string): Promise<void> {
+    if (!this.sprint || !isMorningTrigger(text)) return;
+    const log = this.logger?.child('standup');
+    log?.info('morning trigger', { turnId });
+    try {
+      const result = await this.sprint.runMorningFetch();
+      log?.info('standup fetch done', { turnId, ...result });
+    } catch (err) {
+      log?.warn('standup fetch failed', { turnId, error: String(err) });
+    }
   }
 
   /** Track a task as running (or not) and refresh the avatar's working state. */
@@ -161,6 +193,8 @@ export class Supervisor {
         return this.handleWatchAdd(client, env as WsEnvelope<'watches.add'>);
       case 'watches.remove':
         return this.handleWatchRemove(client, env as WsEnvelope<'watches.remove'>);
+      case 'runtime.features':
+        return this.sendFeatures(client, env);
       case 'proactive.notify':
         // External clients (e.g. Sprint) can push a proactive notice by sending
         // this message; the daemon re-broadcasts it so the overlay speaks it.
@@ -199,6 +233,9 @@ export class Supervisor {
           if (!resolved.ok) return reply({ error: resolved.error }, true);
           cwd = resolved.path;
         }
+        // "morning" delegated from voice: fetch before the task starts, so the
+        // worker's first read of sprint state is already current.
+        await this.maybeRunStandupFetch(prompt, env.id);
         const taskId = this.tasks.create(prompt, { cwd });
         return reply({ status: 'started', task_id: taskId, ...(cwd ? { folder: cwd } : {}) });
       }
@@ -246,6 +283,9 @@ export class Supervisor {
       chars: text.length,
       brainId: this.brain.id,
     });
+    // "morning" typed into chat: same deterministic fetch as the voice path, run
+    // before the brain sees the message so its sprint context is post-fetch.
+    await this.maybeRunStandupFetch(text, env.id);
     // Remember which conversation this turn belongs to: if the user starts/loads
     // another conversation while the reply streams, the assistant turn must
     // still land here, not in whichever conversation is current at completion.
@@ -256,7 +296,12 @@ export class Supervisor {
     const showThinking = this.config.get('activityShowThinking') !== false;
     let seq = 0;
     const sendStep = (step: ActivityStep['step']) => {
-      client.send('activity.step', { ts: daemonEnvelopeContext.now(), seq: seq++, messageId, step });
+      client.send('activity.step', {
+        ts: daemonEnvelopeContext.now(),
+        seq: seq++,
+        messageId,
+        step,
+      });
     };
     const activity = streamActivity
       ? {
@@ -281,7 +326,10 @@ export class Supervisor {
             sendStep({ kind: 'tool_result', toolId, ok, preview });
           },
           ...(showThinking
-            ? { onThinking: (t: string) => sendStep({ kind: 'thinking', text: truncateThinking(t) }) }
+            ? {
+                onThinking: (t: string) =>
+                  sendStep({ kind: 'thinking', text: truncateThinking(t) }),
+              }
             : {}),
         }
       : undefined;
@@ -386,6 +434,19 @@ export class Supervisor {
 
   private sendWatches(client: WsClient): void {
     client.send('watches.list_result', { watches: this.allWatches() });
+  }
+
+  /**
+   * Answer what optional features resolved here. Fail-open when nothing was
+   * wired (tests): claiming 'unavailable' would disable working controls, which
+   * is the same dishonesty in the other direction.
+   */
+  private sendFeatures(client: WsClient, env: WsEnvelope): void {
+    const features = this.features?.() ?? {
+      semanticMemory: 'available' as const,
+      localCascade: 'available' as const,
+    };
+    client.send('runtime.features_result', { features }, { replyTo: env.id });
   }
 
   private handleWatchAdd(client: WsClient, env: WsEnvelope<'watches.add'>): void {

@@ -156,26 +156,39 @@ export interface CreateMemoryIndexOptions {
   embedder?: Embedder;
 }
 
+/** Which backend `createMemoryIndex` settled on, and why. */
+export interface CreatedMemoryIndex {
+  index: MemoryIndex;
+  backend: 'semantic' | 'keyword';
+  /** Only on the keyword backend: 'disabled' (setting off) or 'unavailable' (no model). */
+  reason?: 'disabled' | 'unavailable';
+}
+
 /**
  * Pick the retrieval backend. Keyword by default. When `semantic` is on, load a
  * local embedding model (optional dependency, same dynamic-import pattern as the
  * local-voice engines) — and if the lib/model isn't installed, fall back to
  * keyword rather than failing. So enabling semantic memory without the model is a
  * graceful downgrade, and CI/default runs always use the keyword path.
+ *
+ * The outcome is REPORTED rather than swallowed: a silent downgrade is exactly
+ * what makes the settings toggle dishonest, so the daemon passes this on to the
+ * UI (runtime.features) to disable the control when no model is reachable.
  */
 export async function createMemoryIndex(
   store: Pick<MemoryStore, 'all'>,
   opts: CreateMemoryIndexOptions = {},
-): Promise<MemoryIndex> {
-  if (opts.semantic) {
-    try {
-      const embedder = opts.embedder ?? (await loadLocalEmbedder());
-      return new SemanticMemoryIndex(store, embedder);
-    } catch {
-      // Model/lib unavailable → keyword fallback (never break recall).
-    }
+): Promise<CreatedMemoryIndex> {
+  if (!opts.semantic) {
+    return { index: new KeywordMemoryIndex(store), backend: 'keyword', reason: 'disabled' };
   }
-  return new KeywordMemoryIndex(store);
+  try {
+    const embedder = opts.embedder ?? (await loadLocalEmbedder());
+    return { index: new SemanticMemoryIndex(store, embedder), backend: 'semantic' };
+  } catch {
+    // Model/lib unavailable → keyword fallback (never break recall).
+    return { index: new KeywordMemoryIndex(store), backend: 'keyword', reason: 'unavailable' };
+  }
 }
 
 /** Load a local sentence-embedding model via @huggingface/transformers (optional dep). */

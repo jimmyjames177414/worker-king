@@ -34,11 +34,14 @@ describe('ConfigStore', () => {
     const dir = tempDir();
     const store = new ConfigStore(undefined, { persist: true, dir });
     store.set('userName', 'Sam');
-    store.set('characterCard', { data: { name: 'Jarvis' } });
+    // An object under a key the schema doesn't know: passthrough must preserve
+    // it verbatim (this is what keeps an orphaned key from a removed feature —
+    // e.g. the old `characterCard` — from wiping the rest of the file).
+    store.set('unknownExtension', { data: { name: 'Jarvis' } });
 
     const reopened = new ConfigStore(undefined, { persist: true, dir });
     expect(reopened.get('userName')).toBe('Sam');
-    expect(reopened.get('characterCard')).toEqual({ data: { name: 'Jarvis' } });
+    expect(reopened.get('unknownExtension')).toEqual({ data: { name: 'Jarvis' } });
   });
 
   it('explicit initial overrides win over the persisted file', () => {

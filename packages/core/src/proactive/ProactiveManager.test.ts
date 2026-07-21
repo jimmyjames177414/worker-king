@@ -48,9 +48,55 @@ describe('ProactiveManager', () => {
     expect(notices).toHaveLength(1);
   });
 
-  it('ships a default calendar watch', () => {
+  it('threads a watch timezone through to the cron factory', () => {
+    const seen: Array<{ expr: string; opts?: { timezone?: string } }> = [];
+    const mgr = new ProactiveManager({
+      respond: async () => 'NONE',
+      notify: () => {},
+      watches: [
+        { id: 'tz', prompt: 'p', cron: '0 9 * * 1-5', timezone: 'America/Chicago' },
+        { id: 'no-tz', prompt: 'p', cron: '* * * * *' },
+      ],
+      makeCron: (expr, _cb, opts) => {
+        seen.push({ expr, ...(opts ? { opts } : {}) });
+        return { stop: () => {} };
+      },
+    });
+    mgr.start();
+    expect(seen[0].opts).toEqual({ timezone: 'America/Chicago' });
+    expect(seen[1].opts).toBeUndefined();
+  });
+
+  it('skips a watch the scheduler rejects without dropping the ones after it', () => {
+    // A bad cron OR a bad timezone throws out of the factory; one hand-edited
+    // watch must not unschedule the rest.
+    const scheduled: string[] = [];
+    const mgr = new ProactiveManager({
+      respond: async () => 'NONE',
+      notify: () => {},
+      watches: [
+        { id: 'bad', prompt: 'p', cron: '0 9 * * 1-5', timezone: 'Not/AZone' },
+        { id: 'good', prompt: 'p', cron: '* * * * *' },
+      ],
+      makeCron: (expr, _cb, opts) => {
+        if (opts?.timezone === 'Not/AZone') throw new RangeError('invalid time zone');
+        scheduled.push(expr);
+        return { stop: () => {} };
+      },
+    });
+    expect(() => mgr.start()).not.toThrow();
+    expect(scheduled).toEqual(['* * * * *']);
+  });
+
+  it('ships a default sprint watch on a working-hours schedule', () => {
     const watches = defaultWatches();
-    expect(watches[0].id).toBe('calendar-heads-up');
+    expect(watches[0].id).toBe('sprint-heads-up');
+    expect(watches[0].cron).toBe('0 9-17 * * 1-5');
+    expect(watches[0].timezone).toBe('America/Chicago');
     expect(watches[0].prompt).toContain('NONE');
+    // It must reach the sprint tool, and must NOT re-report what SprintWatcher
+    // already pushes over SSE (that would notify twice).
+    expect(watches[0].prompt).toContain('mcp__workerking__get_standup_state');
+    expect(watches[0].prompt).toMatch(/Do NOT report new, closed or reassigned/);
   });
 });

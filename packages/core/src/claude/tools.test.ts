@@ -106,6 +106,7 @@ describe('screen-awareness tools', () => {
       'mcp__workerking__get_active_window',
       'mcp__workerking__capture_screen',
       'mcp__workerking__get_standup_state',
+      'mcp__workerking__get_standup_diff',
       'mcp__workerking__remember',
       'mcp__workerking__recall',
       'mcp__workerking__list_memories',
