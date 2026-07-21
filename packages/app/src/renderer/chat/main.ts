@@ -4,6 +4,7 @@ import { renderMarkdown } from './markdown.js';
 import { decorateAssistantBubble } from './copy.js';
 import { applyTheme, normalizeThemePref } from '../shared/theme.js';
 import { CommandPalette } from './palette.js';
+import { ActivityFeed } from './ActivityFeed.js';
 import type { CapabilityManifestEntry } from '@workerking/shared';
 
 /**
@@ -18,6 +19,8 @@ interface Els {
   status: HTMLElement;
   tasksList: HTMLElement;
   tasksCount: HTMLElement;
+  activityList: HTMLElement;
+  activityCount: HTMLElement;
 }
 
 function els(): Els {
@@ -28,6 +31,8 @@ function els(): Els {
     status: document.getElementById('status')!,
     tasksList: document.getElementById('tasks-list')!,
     tasksCount: document.getElementById('tasks-count')!,
+    activityList: document.getElementById('activity-list')!,
+    activityCount: document.getElementById('activity-count')!,
   };
 }
 
@@ -146,9 +151,10 @@ class TaskList {
 }
 
 async function main(): Promise<void> {
-  const { log, input, form, status, tasksList, tasksCount } = els();
+  const { log, input, form, status, tasksList, tasksCount, activityList, activityCount } = els();
   const transcript = loadTranscript();
   const taskList = new TaskList(tasksList, tasksCount);
+  const activityFeed = new ActivityFeed(activityList, activityCount);
 
   // Restore prior transcript so history survives an app restart.
   for (const m of transcript) addMessage(m.who, m.text, m.spoken);
@@ -233,6 +239,8 @@ async function main(): Promise<void> {
       renderInto(entry.el, 'wk', (entry.el.dataset['raw'] ?? '') + '\n\n_(connection lost)_');
       bubbles.delete(id);
     }
+    // Settle any live activity group orphaned by a mid-run daemon death.
+    activityFeed.finalizeStale(STALE_BUBBLE_MS);
   };
   const staleBubbleSweep = setInterval(finalizeStaleBubbles, 15_000);
   window.addEventListener('beforeunload', () => clearInterval(staleBubbleSweep));
@@ -260,17 +268,25 @@ async function main(): Promise<void> {
       renderInto(entry.el, 'wk', text); // Markdown once complete
       bubbles.delete(id);
     }
+    activityFeed.finalize(id, 'done');
     record('wk', text);
   });
 
-  // Task events → the task-list panel.
+  // Live execution feed → the activity panel (correlated by taskId | messageId).
+  client.on('activity.step', (env) => {
+    activityFeed.apply(env.payload);
+  });
+
+  // Task events → the task-list panel (+ activity-group titles/finalization).
   client.on('task.created', (env) => {
     const t = env.payload.task;
     taskList.upsert({ id: t.id, prompt: t.prompt, state: t.state });
+    activityFeed.setTitle(t.id, t.prompt);
   });
   client.on('task.updated', (env) => {
     const t = env.payload.task;
     taskList.upsert({ id: t.id, prompt: t.prompt, state: t.state });
+    activityFeed.setTitle(t.id, t.prompt);
   });
   client.on('task.progress', (env) => {
     taskList.progress(env.payload.taskId, env.payload.progress.text);
@@ -278,6 +294,7 @@ async function main(): Promise<void> {
   client.on('task.done', (env) => {
     const t = env.payload.task;
     taskList.upsert({ id: t.id, prompt: t.prompt, state: t.state, result: t.result?.summary });
+    activityFeed.finalize(t.id, t.state);
   });
   client.on('task.error', (env) => {
     taskList.upsert({
@@ -286,9 +303,11 @@ async function main(): Promise<void> {
       state: 'error',
       error: env.payload.error,
     });
+    activityFeed.finalize(env.payload.taskId, 'error');
   });
   client.on('task.cancelled', (env) => {
     taskList.upsert({ id: env.payload.taskId, prompt: '', state: 'cancelled' });
+    activityFeed.finalize(env.payload.taskId, 'cancelled');
   });
 
   // Spoken turns from the voice layer appear in the chat log too (final only, to
@@ -443,6 +462,14 @@ function wirePanels(): void {
   document
     .getElementById('tasks-close')
     ?.addEventListener('click', () => tasksEl?.classList.remove('open'));
+
+  const activityEl = document.getElementById('activity-panel');
+  document
+    .getElementById('activity-toggle')
+    ?.addEventListener('click', () => activityEl?.classList.toggle('open'));
+  document
+    .getElementById('activity-close')
+    ?.addEventListener('click', () => activityEl?.classList.remove('open'));
 }
 
 main();

@@ -60,6 +60,51 @@ export const taskSchema = z.object({
 export type Task = z.infer<typeof taskSchema>;
 
 // ---------------------------------------------------------------------------
+// Live execution activity — the unthrottled, tool-by-tool feed that lets the
+// user watch what the agent is actually doing (files, commands, thinking).
+// Strictly additive to (and independent of) the throttled voice TaskProgress.
+// ---------------------------------------------------------------------------
+
+export const activityStepKindSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('tool_use'),
+    /** SDK tool_use block id; pairs a later tool_result back to this row. */
+    toolId: z.string(),
+    /** Raw tool name (e.g. 'Bash', 'mcp__srv__tool'). */
+    tool: z.string(),
+    /** Display label (activityLabel). */
+    label: z.string(),
+    /** Salient, truncated input (summarizeToolInput): path / command / query. */
+    summary: z.string(),
+  }),
+  z.object({
+    kind: z.literal('tool_result'),
+    toolId: z.string(),
+    ok: z.boolean(),
+    /** Truncated result preview (previewToolResult). */
+    preview: z.string(),
+  }),
+  z.object({
+    kind: z.literal('thinking'),
+    /** Truncated reasoning text. */
+    text: z.string(),
+  }),
+]);
+export type ActivityStepKind = z.infer<typeof activityStepKindSchema>;
+
+export const activityStepSchema = z.object({
+  ts: z.number(),
+  /** Monotonic per-stream ordering (tool_use and tool_result arrive separately). */
+  seq: z.number(),
+  /** Set for delegated worker tasks. */
+  taskId: z.string().optional(),
+  /** Set for direct chat turns (correlates to the streamed reply). */
+  messageId: z.string().optional(),
+  step: activityStepKindSchema,
+});
+export type ActivityStep = z.infer<typeof activityStepSchema>;
+
+// ---------------------------------------------------------------------------
 // Capability manifest — how WorkerKing "knows all it can do".
 // ---------------------------------------------------------------------------
 
@@ -247,6 +292,10 @@ export const workerKingConfigSchema = z
     remindersEnabled: z.boolean(),
     /** Run scheduled proactive "watch" checks (spends Claude quota); off by default. */
     proactiveEnabled: z.boolean(),
+    /** Stream the live tool-by-tool execution feed to the UI; on by default. */
+    activityStreamEnabled: z.boolean().optional(),
+    /** Include the model's reasoning/thinking in the activity feed; on by default. */
+    activityShowThinking: z.boolean().optional(),
     /** Global hotkey to explain/act on the current clipboard selection. */
     explainHotkey: z.string(),
     /** How the Claude Code toolset is gated; 'gated' by default (fail-closed). */
@@ -313,6 +362,8 @@ export const DEFAULT_CONFIG: WorkerKingConfig = {
   semanticMemory: false,
   remindersEnabled: true,
   proactiveEnabled: false,
+  activityStreamEnabled: true,
+  activityShowThinking: true,
   explainHotkey: 'Control+Shift+E',
   toolPermissionMode: 'gated',
   repoRoots: ['C:\\_repos', '\\\\wsl.localhost\\Ubuntu-22.04\\home\\jamesamiller\\repos'],

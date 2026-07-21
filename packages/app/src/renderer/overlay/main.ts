@@ -43,7 +43,16 @@ async function main(): Promise<VoiceHost | undefined> {
     return;
   }
 
-  client.on('avatar.state', (env) => avatar.set(env.payload.state));
+  // A live voice session owns the avatar: while it's active (mic/thinking/
+  // talking), ignore the daemon's agent-busy avatar.state so a background task's
+  // "thinking" doesn't stomp the voice state. When no voice session is active,
+  // avatar.state drives the companion — so you see it "working" during silent
+  // delegated tasks.
+  let voiceActive = false;
+  client.on('avatar.state', (env) => {
+    if (voiceActive) return;
+    avatar.set(env.payload.state);
+  });
   client.on('welcome', () => avatar.set('idle'));
 
   // Preferred audio devices (system default until config arrives).
@@ -63,6 +72,9 @@ async function main(): Promise<VoiceHost | undefined> {
       talking: 'talking',
       error: 'alert',
     };
+    // Voice owns the avatar while its session is live; released back to
+    // agent-busy (avatar.state) once it returns to idle.
+    voiceActive = env.payload.state !== 'idle';
     avatar.set(map[env.payload.state] ?? 'idle');
     // The voice layer injects its <audio> when a session starts; route it to the
     // chosen output device once it exists.

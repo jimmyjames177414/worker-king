@@ -115,6 +115,8 @@ export class Settings {
       <label class="check"><input type="checkbox" data-cfg="semanticMemory" ${checked('semanticMemory')}> Smarter memory search (local embeddings)</label>
       <label class="check"><input type="checkbox" data-cfg="remindersEnabled" ${checked('remindersEnabled')}> Allow reminders</label>
       <label class="check"><input type="checkbox" data-cfg="proactiveEnabled" ${checked('proactiveEnabled')}> Proactive heads-ups (calendar etc.)</label>
+      <label class="check"><input type="checkbox" data-cfg="activityStreamEnabled" ${checked('activityStreamEnabled')}> Show live activity feed</label>
+      <label class="check"><input type="checkbox" data-cfg="activityShowThinking" ${checked('activityShowThinking')}> Include the model's thinking in the feed</label>
       <hr>
       <label>OpenAI API key ${hasKey ? '<span class="ok">✓ saved</span>' : '<span class="warn">not set</span>'}
         <span class="row"><input type="password" id="openai-key" placeholder="sk-..."><button id="save-key">Save</button></span>

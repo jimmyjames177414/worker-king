@@ -5,6 +5,9 @@ import {
   ClaudeAuthError,
   ClaudeRateLimitError,
   extractTextDelta,
+  extractThinking,
+  extractToolResults,
+  extractToolUseBlocks,
   extractUsage,
   type ClaudeQueryFn,
 } from './ClaudeBackend.js';
@@ -15,6 +18,34 @@ function textDelta(text: string): SDKMessage {
     type: 'stream_event',
     event: { type: 'content_block_delta', delta: { type: 'text_delta', text } },
     parent_tool_use_id: null,
+    uuid: 'u',
+    session_id: 's',
+  } as unknown as SDKMessage;
+}
+
+/** An assistant message carrying tool_use + thinking blocks. */
+function assistantMsg(
+  content: unknown[],
+  parentToolUseId: string | null = null,
+): SDKMessage {
+  return {
+    type: 'assistant',
+    message: { role: 'assistant', content },
+    parent_tool_use_id: parentToolUseId,
+    uuid: 'u',
+    session_id: 's',
+  } as unknown as SDKMessage;
+}
+
+/** A user message carrying tool_result blocks (how the SDK feeds output back). */
+function userToolResult(
+  content: unknown[],
+  parentToolUseId: string | null = null,
+): SDKMessage {
+  return {
+    type: 'user',
+    message: { role: 'user', content },
+    parent_tool_use_id: parentToolUseId,
     uuid: 'u',
     session_id: 's',
   } as unknown as SDKMessage;
@@ -211,5 +242,93 @@ describe('extractUsage', () => {
   it('returns undefined when no usage fields are present', () => {
     expect(extractUsage({ type: 'result' })).toBeUndefined();
     expect(extractUsage(null)).toBeUndefined();
+  });
+});
+
+describe('activity extractors', () => {
+  it('extractToolUseBlocks returns id + name + input for each tool_use', () => {
+    const msg = assistantMsg([
+      { type: 'text', text: 'let me look' },
+      { type: 'tool_use', id: 't1', name: 'Read', input: { file_path: 'a.ts' } },
+      { type: 'tool_use', id: 't2', name: 'Bash', input: { command: 'ls' } },
+    ]);
+    expect(extractToolUseBlocks(msg)).toEqual([
+      { id: 't1', name: 'Read', input: { file_path: 'a.ts' } },
+      { id: 't2', name: 'Bash', input: { command: 'ls' } },
+    ]);
+  });
+
+  it('extractToolResults reads tool_use_id + is_error + content from a user msg', () => {
+    const msg = userToolResult([
+      { type: 'tool_result', tool_use_id: 't1', is_error: false, content: 'ok' },
+      { type: 'tool_result', tool_use_id: 't2', is_error: true, content: 'boom' },
+    ]);
+    expect(extractToolResults(msg)).toEqual([
+      { toolId: 't1', isError: false, content: 'ok' },
+      { toolId: 't2', isError: true, content: 'boom' },
+    ]);
+  });
+
+  it('extractThinking pulls complete thinking blocks', () => {
+    const msg = assistantMsg([
+      { type: 'thinking', thinking: 'first' },
+      { type: 'text', text: 'visible' },
+      { type: 'thinking', thinking: 'second' },
+    ]);
+    expect(extractThinking(msg)).toEqual(['first', 'second']);
+  });
+});
+
+describe('ClaudeBackend.respond activity', () => {
+  it('surfaces tool inputs, results, and thinking to the activity handlers', async () => {
+    const backend = new ClaudeBackend({
+      queryFn: fakeQuery([
+        assistantMsg([
+          { type: 'thinking', thinking: 'planning' },
+          { type: 'tool_use', id: 't1', name: 'Read', input: { file_path: 'a.ts' } },
+        ]),
+        userToolResult([{ type: 'tool_result', tool_use_id: 't1', is_error: false, content: 'code' }]),
+        successResult('s', 'done'),
+      ]),
+    });
+
+    const tools: Array<{ id: string; name: string }> = [];
+    const results: Array<{ toolId: string; isError: boolean }> = [];
+    const thinks: string[] = [];
+    await backend.respond('go', () => {}, {
+      onToolInput: ({ id, name }) => tools.push({ id, name }),
+      onToolResult: ({ toolId, isError }) => results.push({ toolId, isError }),
+      onThinking: (t) => thinks.push(t),
+    });
+
+    expect(tools).toEqual([{ id: 't1', name: 'Read' }]);
+    expect(results).toEqual([{ toolId: 't1', isError: false }]);
+    expect(thinks).toEqual(['planning']);
+  });
+
+  it('skips sub-agent (parent_tool_use_id) tool activity', async () => {
+    const backend = new ClaudeBackend({
+      queryFn: fakeQuery([
+        assistantMsg(
+          [{ type: 'tool_use', id: 'nested', name: 'Bash', input: { command: 'rm' } }],
+          'parent-1',
+        ),
+        userToolResult(
+          [{ type: 'tool_result', tool_use_id: 'nested', is_error: false, content: 'x' }],
+          'parent-1',
+        ),
+        successResult('s', 'done'),
+      ]),
+    });
+
+    const tools: string[] = [];
+    const results: string[] = [];
+    await backend.respond('go', () => {}, {
+      onToolInput: ({ id }) => tools.push(id),
+      onToolResult: ({ toolId }) => results.push(toolId),
+    });
+
+    expect(tools).toEqual([]); // nested tool_use filtered
+    expect(results).toEqual([]); // nested tool_result filtered
   });
 });

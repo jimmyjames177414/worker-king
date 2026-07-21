@@ -136,14 +136,17 @@
         color: inherit;
         text-decoration: underline;
       }
-      /* Header buttons + task count badge */
-      #tasks-toggle {
+      /* Header buttons + count badges */
+      #tasks-toggle,
+      #activity-toggle {
         position: relative;
       }
-      #tasks-count {
+      #tasks-count,
+      #activity-count {
         display: none;
       }
-      #tasks-count.has {
+      #tasks-count.has,
+      #activity-count.has {
         display: inline-block;
         min-width: 16px;
         text-align: center;
@@ -229,6 +232,93 @@
         background: rgba(128, 128, 128, 0.25);
         color: inherit;
       }
+      /* Activity panel (live execution feed; slide-over, mirrors tasks) */
+      #activity-panel {
+        display: none;
+        position: absolute;
+        inset: 0;
+        background: Canvas;
+        overflow-y: auto;
+        padding: 14px 16px;
+        z-index: 5;
+      }
+      #activity-panel.open {
+        display: block;
+      }
+      #activity-panel h2 {
+        margin: 4px 0 6px;
+      }
+      #activity-list:empty::after {
+        content: 'Nothing running right now.';
+        opacity: 0.6;
+        font-size: 13px;
+      }
+      .act-group {
+        border: 1px solid rgba(128, 128, 128, 0.3);
+        border-radius: 10px;
+        padding: 8px 10px;
+        margin-bottom: 8px;
+      }
+      .act-group__head {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 6px;
+      }
+      .act-group__badge {
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        font-weight: 700;
+        padding: 2px 6px;
+        border-radius: 6px;
+        background: rgba(128, 128, 128, 0.25);
+        flex: none;
+      }
+      .act-group--active .act-group__badge {
+        background: #2a6cff;
+        color: #fff;
+      }
+      .act-group__title {
+        font-size: 13px;
+        font-weight: 600;
+        word-break: break-word;
+      }
+      .act-row {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: baseline;
+        gap: 6px;
+        font-size: 12px;
+        padding: 3px 0;
+        border-top: 1px solid rgba(128, 128, 128, 0.15);
+      }
+      .act-row__label {
+        font-weight: 700;
+        flex: none;
+      }
+      .act-row__summary,
+      .act-row__result {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        opacity: 0.85;
+        word-break: break-all;
+      }
+      .act-row__result {
+        width: 100%;
+        opacity: 0.7;
+      }
+      .act-row--ok .act-row__label {
+        color: #17c964;
+      }
+      .act-row--error .act-row__label {
+        color: #f5544a;
+      }
+      .act-row--think {
+        opacity: 0.7;
+        font-style: italic;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
       #composer {
         display: flex;
         gap: 8px;
@@ -304,6 +394,7 @@
       #gear,
       #clear,
       #tasks-toggle,
+      #activity-toggle,
       #history-toggle,
       #watches-toggle {
         background: transparent;
@@ -531,6 +622,7 @@
         <button id="history-toggle" title="History">🕘</button>
         <button id="watches-toggle" title="Proactive watches">⏰</button>
         <button id="tasks-toggle" title="Tasks">📋<span id="tasks-count"></span></button>
+        <button id="activity-toggle" title="Live activity">👁<span id="activity-count"></span></button>
         <button id="clear" title="Clear conversation">🗑</button>
         <button id="gear" title="Settings">⚙</button>
       </span>
@@ -572,6 +664,12 @@
       <h2>Tasks</h2>
       <div id="tasks-list"></div>
       <button id="tasks-close">Close</button>
+    </section>
+    <section id="activity-panel">
+      <h2>Live activity</h2>
+      <p class="hint">What WorkerKing is doing right now — files, commands, and reasoning as it works.</p>
+      <div id="activity-list"></div>
+      <button id="activity-close">Close</button>
     </section>
     <section id="settings">
       <div id="settings-body"></div>

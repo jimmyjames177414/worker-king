@@ -1,5 +1,6 @@
 export * from './json.js';
 export * from './domain.js';
+export * from './activity.js';
 export * from './protocol.js';
 export * from './routing.js';
 export * from './speech.js';

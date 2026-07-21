@@ -1,4 +1,10 @@
-import type { Task, TaskProgress } from '@workerking/shared';
+import type { ActivityStep, Task, TaskProgress } from '@workerking/shared';
+import {
+  activityLabel,
+  previewToolResult,
+  summarizeToolInput,
+  truncateThinking,
+} from '@workerking/shared';
 import { ProgressMapper } from './ProgressMapper.js';
 import type { TaskStore } from './TaskStore.js';
 
@@ -17,6 +23,10 @@ export interface TaskRunEvents {
   onToolUse(name: string): void;
   onDone(summary: string): void;
   onError(err: Error): void;
+  /** Richer execution events for the live activity feed (optional). */
+  onToolInput?(u: { id: string; name: string; input: unknown }): void;
+  onToolResult?(r: { toolId: string; isError: boolean; content: unknown }): void;
+  onThinking?(text: string): void;
 }
 
 export interface TaskRunner {
@@ -34,6 +44,8 @@ export interface TaskEmitter {
   /** A task changed state without progress/finishing — e.g. queued → running. */
   updated(task: Task): void;
   progress(taskId: string, progress: TaskProgress): void;
+  /** Unthrottled, structured step for the live execution feed. */
+  activity(taskId: string, step: ActivityStep): void;
   done(task: Task): void;
   error(taskId: string, error: string): void;
   cancelled(taskId: string): void;
@@ -122,6 +134,17 @@ export class TaskManager {
       task.progress.push(p);
       this.deps.emit.progress(task.id, p);
     };
+    // Monotonic ordering for the activity feed: tool_use and its tool_result
+    // arrive as separate SDK messages, so arrival order isn't reliable.
+    let seq = 0;
+    const emitStep = (step: ActivityStep['step']) => {
+      this.deps.emit.activity(task.id, {
+        ts: this.deps.now(),
+        seq: seq++,
+        taskId: task.id,
+        step,
+      });
+    };
 
     try {
       await this.deps.runner.run(
@@ -129,6 +152,19 @@ export class TaskManager {
         {
           onDelta: () => pushProgress(mapper.heartbeat()),
           onToolUse: (name) => pushProgress(mapper.tool(name)),
+          onToolInput: ({ id, name, input }) =>
+            emitStep({
+              kind: 'tool_use',
+              toolId: id,
+              tool: name,
+              label: activityLabel(name),
+              summary: summarizeToolInput(name, input),
+            }),
+          onToolResult: ({ toolId, isError, content }) => {
+            const { ok, preview } = previewToolResult(content, isError);
+            emitStep({ kind: 'tool_result', toolId, ok, preview });
+          },
+          onThinking: (text) => emitStep({ kind: 'thinking', text: truncateThinking(text) }),
           onDone: (summary) => {
             task.state = 'done';
             task.result = { summary };
