@@ -60,6 +60,13 @@ export interface VoiceProvider {
   /** Push text into the live session for the model to voice (progress/injections). */
   injectAssistantContext(text: string, opts?: { speakNow?: boolean }): Promise<void>;
 
+  /**
+   * Swap the session's standing instructions in place (persona/context change)
+   * WITHOUT resetting the conversation. A no-op when no session is live — the
+   * next `start()`/`recycleSession()` picks up the new prompt.
+   */
+  updateInstructions(systemPrompt: string): void;
+
   /** Barge-in / turn control. */
   interrupt(): Promise<void>;
   setMicEnabled(on: boolean): void;

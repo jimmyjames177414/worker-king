@@ -69,6 +69,16 @@ describe('EnvironmentContext.environmentBlock', () => {
     // No refresh() yet — the synchronous call must still return immediately.
     expect(env.environmentBlock()).toContain('(scanning…)');
   });
+
+  it('voiceOrientation lists all repo names, deduped across roots', async () => {
+    const { env } = build();
+    await env.refresh();
+    const o = env.voiceOrientation();
+    expect(o).toContain('worker-king');
+    expect(o).toContain('notes');
+    // "amethyst" is in C:\_repos and "Amethyst" in the WSL root → shown once.
+    expect(o.match(/amethyst/gi)?.length).toBe(1);
+  });
 });
 
 describe('EnvironmentContext.resolveRepoPath', () => {

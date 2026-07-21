@@ -41,6 +41,7 @@ class FakeBus implements VoiceBus {
 class FakeProvider implements VoiceProvider {
   readonly id = 'local-cascade' as const;
   injected: string[] = [];
+  instructions: string[] = [];
   stopped = false;
   delegate?: VoiceTurnDelegate;
   async start(opts: VoiceStartOptions): Promise<void> {
@@ -51,6 +52,9 @@ class FakeProvider implements VoiceProvider {
   }
   async injectAssistantContext(text: string): Promise<void> {
     this.injected.push(text);
+  }
+  updateInstructions(systemPrompt: string): void {
+    this.instructions.push(systemPrompt);
   }
   async interrupt(): Promise<void> {}
   setMicEnabled(): void {}
@@ -107,6 +111,17 @@ describe('VoiceHost (cascade)', () => {
     await micro();
 
     expect(provider.injected).toEqual(['Once upon a time.']); // nothing after the barge-in
+  });
+
+  it('updateContext hot-patches a live session and no-ops once stopped', async () => {
+    const { provider, host } = await startCascadeHost();
+
+    host.updateContext('fresh voice prompt');
+    expect(provider.instructions).toEqual(['fresh voice prompt']);
+
+    await host.stop();
+    host.updateContext('after stop'); // idle → no live session to patch
+    expect(provider.instructions).toEqual(['fresh voice prompt']);
   });
 
   it('speaks a failure notice and flags the avatar when the brain times out', async () => {

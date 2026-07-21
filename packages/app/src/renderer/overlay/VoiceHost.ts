@@ -206,6 +206,15 @@ export class VoiceHost {
     return this.active;
   }
 
+  /**
+   * Apply a fresh daemon-assembled voice prompt. Hot-patches a live session's
+   * standing instructions in place (no conversation reset); a no-op when idle,
+   * since the next start() reads the latest prompt via getPersona().
+   */
+  updateContext(systemPrompt: string): void {
+    if (this.active) this.provider?.updateInstructions(systemPrompt);
+  }
+
   async toggle(): Promise<void> {
     if (this.active) await this.stop();
     else await this.start();

@@ -267,4 +267,10 @@ export class LocalCascadeProvider implements VoiceProvider {
   async recycleSession(): Promise<void> {
     // Nothing to recycle in a local pipeline (no cloud session cap).
   }
+
+  updateInstructions(systemPrompt: string): void {
+    // The local cascade reads the prompt fresh from startOpts each turn, so just
+    // update the stored base; there's no standing cloud session to patch.
+    if (this.startOpts) this.startOpts = { ...this.startOpts, systemPrompt };
+  }
 }

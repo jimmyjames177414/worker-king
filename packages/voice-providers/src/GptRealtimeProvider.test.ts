@@ -127,6 +127,37 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+describe('updateInstructions', () => {
+  it('hot-patches a live session via transport.updateSessionConfig', async () => {
+    const h = build({ withTransport: true });
+    const { opts } = makeDelegate();
+    await h.provider.start(opts);
+
+    h.provider.updateInstructions('FRESH PROMPT');
+
+    expect(h.last().transport!.configs).toEqual([{ instructions: 'FRESH PROMPT' }]);
+  });
+
+  it('reseeds a recycled session from the updated prompt (no live transport patch lost)', async () => {
+    const h = build({ withTransport: true });
+    const { opts } = makeDelegate();
+    await h.provider.start(opts);
+    h.provider.updateInstructions('FRESH PROMPT');
+
+    await h.provider.recycleSession();
+
+    // The recycled session's instructions start from the updated base.
+    expect(h.cfgs.at(-1)!.systemPrompt).toContain('FRESH PROMPT');
+  });
+
+  it('is a no-op on the wire when no session is live', () => {
+    const h = build({ withTransport: true });
+    // Never started → no session/transport; must not throw.
+    expect(() => h.provider.updateInstructions('X')).not.toThrow();
+    expect(h.sessions).toHaveLength(0);
+  });
+});
+
 describe('extractTranscript', () => {
   it('reads assistant transcript from content blocks', () => {
     expect(

@@ -145,6 +145,30 @@ export class EnvironmentContext {
   }
 
   /**
+   * Compact, flat repo listing for the thin voice model — every repo name across
+   * all roots, so "work on X" resolves without a delegation round-trip. Names
+   * only (no roots/rules paragraph). Synchronous like `environmentBlock()`: reads
+   * the cache and background-refreshes on staleness. The overall voice prompt is
+   * char-capped downstream, so this returns the full set.
+   */
+  voiceOrientation(): string {
+    const roots = this.getConfig().repoRoots ?? [];
+    if (!roots.length) return '';
+    const seen = new Set<string>();
+    const names: string[] = [];
+    for (const root of roots) {
+      for (const name of this.cached(root)?.repos ?? []) {
+        const key = name.toLowerCase();
+        if (seen.has(key)) continue; // a repo mirrored under two roots shows once
+        seen.add(key);
+        names.push(name);
+      }
+    }
+    if (!names.length) return '';
+    return `Available projects (say "work on <name>"): ${names.join(', ')}.`;
+  }
+
+  /**
    * Resolve a repo name or path for a delegated task's working directory.
    * Absolute existing paths pass through; bare names match top-level dirs across
    * the configured roots — exact (case-insensitive) first, then unique prefix.
