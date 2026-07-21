@@ -203,12 +203,32 @@ async function boot(): Promise<void> {
   chat = createChatWindow();
 
   // Forward renderer console output to main stderr so the log runner captures it.
+  //
+  // Shaped to match the daemon's logger (core/util/logger.ts): ISO timestamp,
+  // padded level, bracketed scope. `tail-logs.ps1 -Target all` reads both this
+  // capture and the daemon's own file log, so identical shapes mean the two
+  // interleave into one readable timeline instead of two formats side by side.
+  //
+  // The timestamp is the point: the bugs worth chasing here are timing ones
+  // (a 15s idle timeout firing mid-task, a wake-word enable racing config
+  // arrival), and an unstamped line can't prove or disprove either. Level and
+  // source location come along because Electron flattens the console call to a
+  // bare string — without them a warning is indistinguishable from a debug
+  // line, and finding the call site means grepping the bundle.
+  const CONSOLE_LEVELS = ['DEBUG', 'INFO ', 'WARN ', 'ERROR'];
   for (const [label, win] of [
     ['overlay', overlay],
     ['chat', chat],
   ] as const) {
-    win.webContents.on('console-message', (_e, _level, msg) => {
-      process.stderr.write(`[renderer:${label}] ${msg}\n`);
+    win.webContents.on('console-message', (_e, level, msg, line, sourceId) => {
+      const lvl = CONSOLE_LEVELS[level] ?? String(level);
+      // sourceId is a full URL (dev) or file path (prod); the basename is the
+      // useful part and keeps the line readable.
+      const file = sourceId ? sourceId.split(/[/\\]/).pop() : undefined;
+      const where = file ? ` (${file}:${line})` : '';
+      process.stderr.write(
+        `${new Date().toISOString()} ${lvl} [renderer:${label}] ${msg}${where}\n`,
+      );
     });
   }
 

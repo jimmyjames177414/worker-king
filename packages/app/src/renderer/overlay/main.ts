@@ -6,6 +6,7 @@ import { WakeWordController, createWakeWordDetector, shouldWakeListen } from './
 import { applyOutputDeviceToDom } from '../shared/audioDevices.js';
 import { applyTheme, normalizeThemePref } from '../shared/theme.js';
 import { describeError } from '../shared/describeError.js';
+import { fmt } from '../shared/rendererLog.js';
 
 /**
  * Overlay renderer entry. Wires:
@@ -123,6 +124,11 @@ async function main(): Promise<VoiceHost | undefined> {
   // session (start-only — a detection can never stop a live session). The
   // controller is suspended while a voice session is active so there's exactly
   // one open mic and the detector never hears the assistant's own TTS.
+  // Model load is seconds long and blocks the rest of this function, including
+  // the config.get sends below — so the boundaries are logged. Anything odd in
+  // the startup ordering shows up as a gap between these two lines and the
+  // "wakeWordEnabled arrived" line that follows.
+  console.info('[wake] loading detector');
   const wake = new WakeWordController(
     await createWakeWordDetector(),
     () => void voiceHost.startIfIdle(),
@@ -151,11 +157,23 @@ async function main(): Promise<VoiceHost | undefined> {
   });
   client.on('config.changed', (env) => {
     if (env.payload.key === 'wakeWordEnabled') {
+      // Without this the "setting is on but nothing listens" case is invisible:
+      // the value has to travel daemon -> here before syncWake can ever enable
+      // the mic, and a value that never arrives looks exactly like one that
+      // arrived as false.
+      console.info('[wake] wakeWordEnabled arrived', fmt({ value: env.payload.value }));
       wakeWordEnabled = env.payload.value === true;
       syncWake();
     }
     if (env.payload.key === 'inputDeviceId') {
       inputDeviceId = asStr(env.payload.value);
+      // Raw and normalized both: asStr() maps '' to undefined, and "the config
+      // holds an empty string" vs "the key is absent" reach getUserMedia the
+      // same way but mean different things when fixing the setting.
+      console.debug(
+        '[wake] inputDeviceId arrived',
+        fmt({ raw: env.payload.value, using: inputDeviceId ?? '(unset)' }),
+      );
       if (wake.isEnabled()) {
         wake.disable();
         syncWake();
@@ -167,6 +185,7 @@ async function main(): Promise<VoiceHost | undefined> {
     }
     if (env.payload.key === 'theme') applyTheme(normalizeThemePref(env.payload.value));
   });
+  console.debug('[overlay] requesting config');
   client.send('config.get', { key: 'inputDeviceId' });
   client.send('config.get', { key: 'outputDeviceId' });
   client.send('config.get', { key: 'theme' });

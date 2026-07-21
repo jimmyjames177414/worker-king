@@ -14,6 +14,8 @@
  */
 
 import { audioInputConstraints } from '../shared/audioDevices.js';
+import { describeError } from '../shared/describeError.js';
+import { fmt } from '../shared/rendererLog.js';
 
 export interface WakeWordDetector {
   /**
@@ -65,13 +67,41 @@ const WAKE_MODELS = {
  * degrade, never crash.
  */
 export async function createWakeWordDetector(): Promise<WakeWordDetector> {
+  const t0 = performance.now();
   try {
     const mod = await import('@workerking/wakeword-openwakeword');
-    return await mod.createDetector(WAKE_MODELS);
+    const detector = await mod.createDetector(WAKE_MODELS);
+    // The single most important wake-word log line: a NullWakeWordDetector and
+    // a working one are indistinguishable from outside (both are silent), so
+    // "the wake word does nothing" can't be diagnosed without knowing which
+    // one is installed. Timed too — model load is seconds, and the mic can't
+    // open until it finishes.
+    console.info(
+      '[wake] detector ready (openWakeWord)',
+      fmt({ ms: Math.round(performance.now() - t0), threshold: WAKE_MODELS.threshold }),
+    );
+    return detector;
   } catch (err) {
     // Plain ASCII, not an em dash: a Windows console/terminal not set to the
     // UTF-8 codepage (the common default) renders "—" as garbled "ΓÇö" mojibake.
-    console.warn('[wake] detector unavailable - wake word disabled', err);
+    //
+    // The model URLs are in the message on purpose: the common failure is a
+    // fetch 404/blocked scheme, and knowing which URL was tried is the whole
+    // diagnosis. (A packaged build loads the page over file://, where fetch is
+    // unavailable — that failure lands here and disables the feature silently.)
+    console.warn(
+      '[wake] detector unavailable - wake word disabled',
+      fmt({
+        ms: Math.round(performance.now() - t0),
+        // Guarded: this path also runs under the headless test env, which has
+        // no `location`. In the app it's the key signal — an http:// page is
+        // the dev server (fetch works), a file:// page is a packaged build
+        // (fetch is blocked, which is itself the cause of landing here).
+        pageUrl: globalThis.location?.href ?? '(no location)',
+        models: WAKE_MODELS,
+        error: describeError(err),
+      }),
+    );
     return new NullWakeWordDetector();
   }
 }
@@ -160,11 +190,31 @@ export class WakeWordController {
     this.enabled = true;
     const myEnable = ++this.enableEpoch;
     this.sawFirstFrame = false;
-    console.debug(`[wake] enable: requesting mic (inputDeviceId=${inputDeviceId ?? 'default'})`);
+    const constraints = audioInputConstraints(inputDeviceId);
+    // The constraint object, not just the id: `audioInputConstraints` turns a
+    // set id into `{deviceId: {exact: id}}`, and an `exact` match against a
+    // stale id is the difference between "opens the default mic" and
+    // "OverconstrainedError". `unset` is explicit so an absent id can never be
+    // confused with the literal device id "default".
+    console.debug(
+      '[wake] enable: requesting mic',
+      fmt({ inputDeviceId: inputDeviceId ?? '(unset)', constraints }),
+    );
     this.detector.reset();
     this.chunker.reset();
 
-    const stream = await navigator.mediaDevices.getUserMedia(audioInputConstraints(inputDeviceId));
+    let stream: MediaStream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia(constraints);
+    } catch (err) {
+      // Enumerate on failure so the log answers "which mics did the renderer
+      // actually see" — the only way to tell a stale configured id apart from
+      // a renderer that can see no input devices at all (a permissions or
+      // Electron-window problem, needing a completely different fix).
+      await this.logInputDevices();
+      this.enabled = false;
+      throw err;
+    }
     // disable() (or a newer enable, e.g. a device switch) won the race while we
     // awaited the mic: releasing the just-acquired stream here is what keeps
     // the mic indicator honest — assigning it would orphan a live tap.
@@ -204,6 +254,23 @@ export class WakeWordController {
       source.connect(this.node);
       this.node.connect(this.ctx.destination);
       console.debug('[wake] listening via ScriptProcessorNode (no audioWorklet)');
+    }
+  }
+
+  /**
+   * Log every audio input the renderer can see. Labels are empty until some
+   * mic permission has been granted, so an all-blank list is itself the signal
+   * that the permission, not the device choice, is what failed.
+   */
+  private async logInputDevices(): Promise<void> {
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const inputs = devices
+        .filter((d) => d.kind === 'audioinput')
+        .map((d) => ({ deviceId: d.deviceId, label: d.label || '(no label)' }));
+      console.warn('[wake] audio inputs visible to the renderer', fmt({ count: inputs.length, inputs }));
+    } catch (err) {
+      console.warn('[wake] could not enumerate audio inputs', fmt({ error: describeError(err) }));
     }
   }
 

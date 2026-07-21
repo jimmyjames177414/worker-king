@@ -60,12 +60,36 @@ const EMB_DIM = 96;
 const DEFAULT_THRESHOLD = 0.5;
 const DEFAULT_MAX_QUEUE = 50;
 
+/**
+ * Left context prepended to every melspec call, matching upstream openWakeWord's
+ * `-n_samples - 160*3` slice.
+ *
+ * The melspec model's STFT is a conv with kernel=512, stride=160, pad=0, so it
+ * emits `floor((N - 512) / 160) + 1` frames. A bare 1280-sample hop yields 5,
+ * not the 8 the rest of this pipeline assumes — which silently runs everything
+ * at 62.5 mel fps instead of 100, stretching the 76-frame embedding window to
+ * 1.216 s of audio instead of 760 ms. The embedding model then sees speech 1.6x
+ * slower than it was trained on and the wake score pins near zero forever.
+ * 480 + 1280 = 1760 samples gives exactly 8 frames.
+ */
+const MEL_CONTEXT = 480;
+
+/**
+ * openWakeWord's melspec model is trained on 16-bit PCM (upstream flat-out
+ * rejects any other dtype); Web Audio hands us floats in +/-1.0. Without this
+ * the STFT magnitudes come out ~90 dB too small and the log-mels land nowhere
+ * near the range the embedding model ever saw.
+ */
+const INT16_SCALE = 32767;
+
 export class OpenWakeWordDetector implements WakeWordDetectorLike {
   private readonly threshold: number;
   private readonly maxQueue: number;
   private melBuffer: Float32Array[] = [];
   private embBuffer: Float32Array[] = [];
   private queue: Float32Array[] = [];
+  /** Tail of the previous audio fed to melspec (see MEL_CONTEXT). Zeros on a cold start. */
+  private melContext = new Float32Array(MEL_CONTEXT);
   private processing = false;
   private detected = false;
   /** Bumped by reset() so an in-flight step can't write into cleared buffers. */
@@ -86,7 +110,10 @@ export class OpenWakeWordDetector implements WakeWordDetectorLike {
    * the (async) pipeline since the previous call.
    */
   process(frame: Float32Array): boolean {
-    this.queue.push(frame);
+    // An empty frame is only ever a latch read (callers poll this return value),
+    // and queueing one would run melspec on bare context — too short to produce
+    // a single frame.
+    if (frame.length) this.queue.push(frame);
     if (this.queue.length > this.maxQueue) {
       // Inference is behind realtime — drop the oldest audio, keep up.
       this.queue.splice(0, this.queue.length - this.maxQueue);
@@ -107,6 +134,7 @@ export class OpenWakeWordDetector implements WakeWordDetectorLike {
     this.queue = [];
     this.melBuffer = [];
     this.embBuffer = [];
+    this.melContext = new Float32Array(MEL_CONTEXT);
     this.detected = false;
   }
 
@@ -130,9 +158,19 @@ export class OpenWakeWordDetector implements WakeWordDetectorLike {
   }
 
   private async step(frame: Float32Array, myEpoch: number): Promise<void> {
-    // 1. Raw samples → mel frames. Output shape is [1, 1, F, 32]; F depends on
-    //    the frame length, so read it from the dims instead of assuming.
-    const mel = await this.sessions.melspec.run(frame, [1, frame.length]);
+    // 1. Raw samples → mel frames. The model needs MEL_CONTEXT samples of
+    //    preceding audio to emit one frame per 160 samples of the new hop, and
+    //    it wants int16-range PCM. Output shape is [1, 1, F, 32]; F depends on
+    //    the input length, so read it from the data instead of assuming.
+    const input = new Float32Array(MEL_CONTEXT + frame.length);
+    input.set(this.melContext, 0);
+    input.set(frame, MEL_CONTEXT);
+    // Carry this call's tail forward *before* awaiting, so a reset() landing
+    // mid-inference clears it (and the epoch guard below drops our result).
+    this.melContext = input.slice(input.length - MEL_CONTEXT);
+    const scaled = new Float32Array(input.length);
+    for (let i = 0; i < input.length; i++) scaled[i] = input[i] * INT16_SCALE;
+    const mel = await this.sessions.melspec.run(scaled, [1, scaled.length]);
     if (myEpoch !== this.epoch) return;
     const melFrames = mel.data.length / MEL_BINS;
     for (let i = 0; i < melFrames; i++) {

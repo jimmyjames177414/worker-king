@@ -8,6 +8,7 @@ import {
   type WsMessageKind,
 } from '@workerking/shared';
 import { describeError } from '../shared/describeError.js';
+import { fmt } from '../shared/rendererLog.js';
 
 /** Monotonic clock for latency timing (N7). */
 const now = (): number => performance.now();
@@ -104,17 +105,24 @@ export class VoiceHost {
     // "still working…" utterances. Finals bypass the gate (and cancel any
     // pending progress — the result supersedes it).
     this.ws.on('task.progress', (env) => {
+      console.debug(
+        '[voice] task progress',
+        fmt({ taskId: env.payload.taskId, running: this.runningTasks.size }),
+      );
       this.speakProgress(env.payload.progress.text);
     });
     this.ws.on('task.done', (env) => {
       const summary = env.payload.task.result?.summary;
+      this.forgetTask(env.payload.task.id, 'done');
       this.clearPendingProgress();
       if (summary) this.enqueueSpeech(summary);
     });
     this.ws.on('task.error', (env) => {
+      this.forgetTask(env.payload.taskId, 'error');
       this.clearPendingProgress();
       this.enqueueSpeech(`That task ran into a problem: ${env.payload.error}`);
     });
+    this.ws.on('task.cancelled', (env) => this.forgetTask(env.payload.taskId, 'cancelled'));
 
     this.bridge.onPushToTalk(() => void this.toggle());
   }
@@ -177,8 +185,41 @@ export class VoiceHost {
   private static readonly SILENCE_TIMEOUT_MS = 15_000;
   private silenceTimer?: ReturnType<typeof setTimeout>;
 
+  /**
+   * Delegated tasks currently running on the worker.
+   *
+   * The silence clock must not count a task's thinking time as neglect. The
+   * provider drops to 'listening' the instant the assistant finishes saying
+   * "On it" and calls delegate_to_worker, which arms the timer — and Claude
+   * Code routinely works for far longer than SILENCE_TIMEOUT_MS. Without this
+   * set the session was torn down mid-task and the result had nothing left to
+   * speak through: the "gets cut off" symptom.
+   */
+  private readonly runningTasks = new Set<string>();
+
+  private trackTask(taskId: string): void {
+    this.runningTasks.add(taskId);
+    console.info('[voice] task started', fmt({ taskId, running: this.runningTasks.size }));
+    // A task in flight suspends the idle clock; it re-arms when the task ends
+    // and the provider next settles into 'listening'.
+    this.clearSilenceTimer();
+  }
+
+  private forgetTask(taskId: string, why: string): void {
+    if (!this.runningTasks.delete(taskId)) return;
+    console.info('[voice] task ended', fmt({ taskId, why, running: this.runningTasks.size }));
+    // Last task done and the mic is sitting open: restart the idle clock so a
+    // wake-word session still reclaims the mic once things go quiet.
+    if (!this.runningTasks.size && this.active) this.armSilenceTimer();
+  }
+
   private armSilenceTimer(): void {
     this.clearSilenceTimer();
+    if (this.runningTasks.size) {
+      console.debug('[voice] silence timer not armed', fmt({ running: this.runningTasks.size }));
+      return;
+    }
+    console.debug('[voice] silence timer armed', fmt({ ms: VoiceHost.SILENCE_TIMEOUT_MS }));
     this.silenceTimer = setTimeout(
       () => void this.onSilenceTimeout(),
       VoiceHost.SILENCE_TIMEOUT_MS,
@@ -194,12 +235,26 @@ export class VoiceHost {
 
   private async onSilenceTimeout(): Promise<void> {
     if (!this.active) return;
+    // Belt-and-braces with armSilenceTimer's guard: a task can start between
+    // arming and firing, and killing the session then is the exact bug.
+    if (this.runningTasks.size) {
+      console.debug(
+        '[voice] silence timeout deferred, task in flight',
+        fmt({ running: this.runningTasks.size }),
+      );
+      this.armSilenceTimer();
+      return;
+    }
+    console.info(
+      '[voice] silence timeout, stopping session',
+      fmt({ afterMs: VoiceHost.SILENCE_TIMEOUT_MS }),
+    );
     this.ws.send('voice.transcript', {
       role: 'assistant',
       text: 'Going idle after a quiet moment — say the wake word or press the hotkey to start again.',
       final: true,
     });
-    await this.stop();
+    await this.stop('silence-timeout');
   }
 
   isActive(): boolean {
@@ -216,8 +271,8 @@ export class VoiceHost {
   }
 
   async toggle(): Promise<void> {
-    if (this.active) await this.stop();
-    else await this.start();
+    if (this.active) await this.stop('toggle');
+    else await this.start('toggle');
   }
 
   /**
@@ -225,7 +280,8 @@ export class VoiceHost {
    * detection during a live session can never stop it.
    */
   async startIfIdle(): Promise<void> {
-    if (!this.active) await this.start();
+    if (!this.active) await this.start('wake-word');
+    else console.debug('[voice] startIfIdle ignored, session already active');
   }
 
   /** Speak text aloud if a voice session is active (proactive notices, explain replies). */
@@ -287,10 +343,14 @@ export class VoiceHost {
     this.pendingProgress = undefined;
   }
 
-  private async start(): Promise<void> {
+  private async start(reason = 'explicit'): Promise<void> {
     if (this.active) return;
     this.active = true;
     const myStart = ++this.startEpoch;
+    console.info(
+      '[voice] starting session',
+      fmt({ reason, provider: this.providerId, model: this.model }),
+    );
     this.startPromise = this.doStart(myStart);
     await this.startPromise;
   }
@@ -312,8 +372,21 @@ export class VoiceHost {
         tools: cascade ? [] : this.supervisorTools(),
         delegate: {
           onToolCall: async (name: string, args: JsonValue): Promise<JsonValue> => {
+            console.info('[voice] tool call', fmt({ name, args }));
             const reply = await this.ws.request('voice.tool_call', { name, args });
-            if (isKind(reply, 'voice.tool_result')) return reply.payload.result as JsonValue;
+            if (isKind(reply, 'voice.tool_result')) {
+              const result = reply.payload.result as JsonValue;
+              console.info('[voice] tool result', fmt({ name, result }));
+              // delegate_to_worker answers {status:'started', task_id}. That id
+              // is the only signal the overlay gets that the worker is busy —
+              // task.progress may never arrive for a quiet task.
+              const taskId = (result as { task_id?: unknown } | null)?.task_id;
+              if (name === 'delegate_to_worker' && typeof taskId === 'string') {
+                this.trackTask(taskId);
+              }
+              return result;
+            }
+            console.warn('[voice] tool call got no result', fmt({ name, kind: reply.kind }));
             return {};
           },
           onUserTranscript: (text, final) => {
@@ -329,6 +402,13 @@ export class VoiceHost {
             if (!cascade) this.ws.send('voice.transcript', { role: 'assistant', text, final });
           },
           onStateChange: (state) => {
+            // The state trail is what makes a mid-turn teardown readable after
+            // the fact: which state the session was in when it died, and how
+            // long it sat there.
+            console.debug(
+              '[voice] provider state',
+              fmt({ state, running: this.runningTasks.size }),
+            );
             this.ws.send('voice.state', { state });
             // The silence clock only runs while genuinely idle-and-listening
             // with nothing in flight: arming it here (rather than on
@@ -340,8 +420,17 @@ export class VoiceHost {
           },
           onSpeechStart: () => {
             // Barge-in: invalidate any in-flight/queued reply so a now-stale
-            // response is never spoken over the user (N2).
-            if (this.turnActive) this.turnEpoch++;
+            // response is never spoken over the user (N2). Logged because a
+            // spurious barge-in (the mic hearing the assistant's own TTS) also
+            // truncates a reply, and looks identical from outside to the idle
+            // timeout — the epoch bump is what tells them apart.
+            if (this.turnActive) {
+              console.info(
+                '[voice] barge-in, dropping in-flight reply',
+                fmt({ turn: this.turnEpoch }),
+              );
+              this.turnEpoch++;
+            }
           },
           onAudioLevel: (level) => this.ws.send('voice.audio_level', { level }),
           onError: (err, info) => {
@@ -356,7 +445,9 @@ export class VoiceHost {
                 text: 'Voice connection lost — press the hotkey to restart.',
                 final: true,
               });
-              void this.stop().then(() => this.ws.send('voice.state', { state: 'error' }));
+              void this.stop('provider-fatal').then(() =>
+                this.ws.send('voice.state', { state: 'error' }),
+              );
               return;
             }
             this.ws.send('voice.state', { state: 'error' });
@@ -472,12 +563,26 @@ export class VoiceHost {
     });
   }
 
-  async stop(): Promise<void> {
+  /**
+   * Tear down the voice session.
+   *
+   * `reason` exists because the provider's own `stop` log line records only
+   * that it was told to stop, never by whom — and the callers are very
+   * different problems: the user toggling off is fine, the idle timeout firing
+   * mid-task is a bug, a fatal provider error is a third thing. Without it,
+   * diagnosing "it cut me off" means guessing between them.
+   */
+  async stop(reason = 'explicit'): Promise<void> {
+    console.info(
+      '[voice] stopping session',
+      fmt({ reason, active: this.active, running: this.runningTasks.size }),
+    );
     // Invalidate any start still in flight, then wait for it to settle so the
     // provider reference (if it got assigned) is the one we stop — a bare stop
     // during start used to leave the just-created session live and orphaned.
     this.startEpoch++;
     this.active = false;
+    this.runningTasks.clear();
     this.clearPendingProgress();
     this.clearSilenceTimer();
     await this.startPromise?.catch(() => {});

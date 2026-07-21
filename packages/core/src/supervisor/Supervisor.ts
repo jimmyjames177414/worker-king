@@ -200,6 +200,23 @@ export class Supervisor {
         // this message; the daemon re-broadcasts it so the overlay speaks it.
         this.server.broadcast('proactive.notify', (env as WsEnvelope<'proactive.notify'>).payload);
         return;
+      // The voice layer lives in the overlay renderer, which is both producer
+      // and consumer of these: it reports its provider state and reads it back
+      // to suspend the wake mic and let voice own the avatar, and its
+      // transcripts/levels drive its own captions. The daemon needs none of it,
+      // but without the echo those handlers never fire at all.
+      case 'voice.state':
+        this.server.broadcast('voice.state', (env as WsEnvelope<'voice.state'>).payload);
+        return;
+      case 'voice.transcript':
+        this.server.broadcast('voice.transcript', (env as WsEnvelope<'voice.transcript'>).payload);
+        return;
+      case 'voice.audio_level':
+        this.server.broadcast(
+          'voice.audio_level',
+          (env as WsEnvelope<'voice.audio_level'>).payload,
+        );
+        return;
       default:
         // Not handled in this phase.
         return;
