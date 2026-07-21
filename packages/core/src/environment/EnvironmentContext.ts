@@ -130,7 +130,9 @@ export class EnvironmentContext {
           const repos = entry.repos ?? [];
           const shown = repos.slice(0, this.maxReposPerRoot);
           const more = repos.length - shown.length;
-          lines.push(`  - ${root}: ${shown.join(', ') || '(empty)'}${more > 0 ? ` (+${more} more)` : ''}`);
+          lines.push(
+            `  - ${root}: ${shown.join(', ') || '(empty)'}${more > 0 ? ` (+${more} more)` : ''}`,
+          );
         }
       }
       lines.push(

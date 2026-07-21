@@ -345,10 +345,7 @@ export class VoiceHost {
           },
           onAudioLevel: (level) => this.ws.send('voice.audio_level', { level }),
           onError: (err, info) => {
-            console.error(
-              '[voice]',
-              `${describeError(err)} (fatal=${info?.fatal ?? false})`,
-            );
+            console.error('[voice]', `${describeError(err)} (fatal=${info?.fatal ?? false})`);
             if (info?.fatal) {
               // The provider's session is dead and auto-recovery failed. A
               // spoken notice is impossible (the audio path is the dead thing),

@@ -336,7 +336,8 @@ export class ClaudeBackend implements Brain {
 
   /** Reset conversation continuity (start a fresh Claude session next message). */
   resetSession(): void {
-    if (this.sessionId) this.log.debug('session reset: explicit', { droppedSessionId: this.sessionId });
+    if (this.sessionId)
+      this.log.debug('session reset: explicit', { droppedSessionId: this.sessionId });
     this.sessionId = undefined;
   }
 

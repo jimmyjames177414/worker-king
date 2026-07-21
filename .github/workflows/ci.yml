@@ -41,7 +41,9 @@ jobs:
         run: pnpm typecheck
 
       - name: Lint
-        run: pnpm lint -- --max-warnings 0
+        # No `--` before the flag: pnpm 10 forwards it verbatim, eslint reads it
+        # as end-of-options and treats --max-warnings as a file pattern (exit 2).
+        run: pnpm lint --max-warnings 0
 
       - name: Format check
         run: pnpm format:check

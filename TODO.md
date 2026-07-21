@@ -167,21 +167,25 @@
 ### A. VoiceHost Lifecycle & Resource Management
 
 **Agent Finding: Start/Stop Guard is Excellent**
+
 - ✅ Uses `startEpoch` pattern to guard against concurrent start/stop
 - ✅ Waits for in-flight start before stopping (line 287)
 - ✅ Invalidates stale starts with epoch check (line 147, 195)
 
 **Agent Finding: Turn Epoch Prevents Stale Replies (Barge-in)**
+
 - ✅ When user interrupts, `turnEpoch` increments
 - ✅ Pending sentences check `if (myTurn !== this.turnEpoch)` before speaking
 - ✅ Robust per-turn invalidation prevents overlapping speech
 
 **Agent Finding: Tool Call Correlation (Envelope-based)**
+
 - ✅ Uses `ws.request()` with reply ID matching
 - ✅ Multiple concurrent tool calls are properly correlated
 - ⚠️ BUT: If daemon crashes/WS dies, request times out at 20s; tool result resolves as `{}`
 
 **Critical Issue #1: `speakChain` NOT awaited on stop**
+
 - 🔴 **Severity: MEDIUM**
 - **Location:** VoiceHost.ts line 287, `stop()` method
 - **Problem:** When voice session stops, pending speech in `speakChain` can still play after `stop()` returns
@@ -200,18 +204,20 @@
 - **Recommendation:** Add `await this.speakChain` before provider cleanup
 
 **Critical Issue #2: No Timeout for Key Mint or Provider Start**
+
 - 🔴 **Severity: MEDIUM**
 - **Location:** GptRealtimeProvider.ts line 65 (`session.connect()`)
 - **Problem:** If network drops during ephemeral key fetch or WebRTC negotiation, user hangs indefinitely
 - **Code:**
   ```typescript
-  const ephemeralKey = await this.opts.mintKey();  // ← no timeout
-  await this.session.connect({ apiKey: ephemeralKey });  // ← no timeout
+  const ephemeralKey = await this.opts.mintKey(); // ← no timeout
+  await this.session.connect({ apiKey: ephemeralKey }); // ← no timeout
   ```
 - **Impact:** User can't recover; must kill and restart app
 - **Recommendation:** Wrap in `Promise.race([...], timeout(30000))` or configure SDK timeout
 
 **Critical Issue #3: Provider Not Stopped in Error Path**
+
 - 🟡 **Severity: LOW**
 - **Location:** VoiceHost.ts lines 199-204, `doStart()` catch block
 - **Problem:** If `provider.start()` throws after provider is partially initialized, it's not explicitly stopped
@@ -228,10 +234,12 @@
 - **Recommendation:** Add `await provider.stop();` before clearing reference
 
 **Good: Event Listener Cleanup**
+
 - ✅ Turn-specific listeners are unsubscribed in `finally` block (line 249)
 - ✅ Global config/task listeners are intentional (not tied to session lifetime)
 
 **Good: Error State Recovery**
+
 - ✅ After error, `this.active` is reset to `false`, allowing user to retry
 
 ---
@@ -239,6 +247,7 @@
 ### B. Ephemeral Key Security
 
 **Agent Finding: Real Key Protection is EXCELLENT**
+
 - ✅ Stored as OS-encrypted ciphertext via Electron safeStorage (DPAPI on Windows)
 - ✅ Only decrypted on-demand during IPC handler call (no caching)
 - ✅ Renderer never sees real key — only ephemeral keys (`ek_...`)
@@ -246,12 +255,14 @@
 - ✅ Fallback to `OPENAI_API_KEY` env var is dev-only
 
 **Agent Finding: Ephemeral Key Minting is Sound**
+
 - ✅ Proper Bearer auth: `Authorization: Bearer ${apiKey}`
 - ✅ Correctly extracts `value` or `client_secret.value` from OpenAI response
 - ✅ Returns only `ek_...` to renderer (never exposes real key)
 - ✅ Validates input (throws if API key missing)
 
 **Critical Issue #4: NO Expiry Handling or Auto-Refresh**
+
 - 🔴 **Severity: MEDIUM**
 - **Location:** RealtimeKeys.ts line 37-43 (parses but ignores `expires_at`)
 - **Problem:** Ephemeral keys expire (~1 hour), but code doesn't track or refresh them
@@ -265,15 +276,17 @@
   3. Or: Call `recycleSession()` periodically (every 45 minutes)
 
 **Critical Issue #5: NO Retry Logic for Transient Failures**
+
 - 🔴 **Severity: MEDIUM**
 - **Location:** RealtimeKeys.ts, mintEphemeralKey() function
 - **Problem:** Network errors or rate limits (429) cause immediate failure with no retry
-- **Impact:** 
+- **Impact:**
   - User clicks voice once, network hiccup → "error" state
   - Rate limit (user/org has multiple WorkerKing sessions) → fails without retry
 - **Recommendation:** Implement exponential backoff retry (max 3x) for transient errors (429, network)
 
 **Good: Error Exposure is Safe**
+
 - ✅ Only ephemeral keys reach error logs (not real keys)
 - ✅ Ephemeral keys are short-lived (~1 min), limiting damage if exposed
 - ✅ Error messages don't leak OpenAI's echoed auth headers
@@ -283,14 +296,17 @@
 ### C. State Synchronization & Concurrency
 
 **Good: Concurrent Start/Stop Handling**
+
 - ✅ `startEpoch` guard prevents double-start
 - ✅ `stop()` waits for in-flight `start()` before tearing down
 
 **Good: Tool Call Ordering**
+
 - ✅ WS envelope-based request/response matching ensures proper correlation
 - ✅ Multiple concurrent tool calls don't interfere
 
 **Potential Issue: Session Recycle State**
+
 - `turnEpoch` NOT reset during `recycleSession()`
 - ✅ **This is actually safe** — old turn checks `if (myTurn !== this.turnEpoch)` still work
 - New turn will increment epoch anyway
@@ -300,11 +316,13 @@
 ### D. Third-Party SDK Coupling
 
 **Potential Issue: `@openai/agents-realtime` version pinning**
+
 - Current: v0.13.2
 - Risk: Major version bump could change session event shapes
 - **Recommendation:** Monitor for updates; test 0.14.x when released
 
 **Potential Issue: SessionFactory injection error handling**
+
 - If factory callback throws, error propagates through `session.connect()` → caught at line 199
 - ✅ **Actually fine** — factory errors are treated like other start errors
 
@@ -313,11 +331,13 @@
 ### E. Audio & PCM Processing
 
 **Status: Not deeply analyzed (would require signal processing review)**
+
 - PCM16 → RMS calculation at GptRealtimeProvider.ts (audio level for avatar mouth)
 - Assumes: calculation is correct (typical PCM16 processing)
 - **Recommendation:** Verify RMS calculation against OpenAI SDK docs
 
 **Audio device selection:**
+
 - Applied in overlay/main.ts when session starts
 - **Assumption:** WebRTC session uses selected output device automatically
 - **Risk:** Device switch mid-session may not take effect (depends on browser/SDK)
@@ -327,12 +347,14 @@
 ### F. Supervisor Tool Integration
 
 **Status: Tool availability on voice start**
+
 - Tools are built at start time: `delegate_to_worker`, `check_task_status`, `cancel_task`
 - **Risk:** If supervisor changes tool signatures, voice model gets stale list
 - **Mitigation:** Would require watching supervisor for changes (not currently done)
 - **Recommendation:** Document that supervisor changes require voice session restart
 
 **Tool argument validation:**
+
 - Protocol defines `voice.tool_call` schema in protocol.ts
 - **Assumption:** Supervisor validates args before execution
 - **Recommendation:** Verify Supervisor.ts validates against tool schema
@@ -342,17 +364,20 @@
 ### G. LocalCascadeProvider (Phase 5) Status
 
 **Status: PARTIALLY IMPLEMENTED**
+
 - `LocalCascadeProvider.ts` exists (~130 lines)
 - Implements `VoiceProvider` interface (start, stop, on, injectAssistantContext)
 - Uses optional engines: `@ricky0123/vad-web`, `@huggingface/transformers`, `kokoro-js`
 
 **Critical Issue #6: LocalCascadeProvider Incomplete for Production**
+
 - 🟡 **Severity: MEDIUM** (if user enables it before Phase 5 complete)
 - **Problem:** `injectAssistantContext()` not fully implemented for cascade (looks like stub)
 - **Impact:** If user switches voice provider to "local-cascade" before Phase 5, speech injection fails
 - **Recommendation:** Add feature flag to prevent enabling until ready, or complete implementation
 
 **Good: Optional imports**
+
 - ✅ Optional engines use dynamic imports, so they don't fail unless enabled
 
 ---
@@ -360,11 +385,13 @@
 ### H. Test Coverage
 
 **Current tests (from exploration):**
+
 - ✅ `GptRealtimeProvider.test.ts` — 9 test suites (connection, tools, PCM, errors, mute, recycle)
 - ✅ `RealtimeKeys.test.ts` — 4 test suites (mint, auth, legacy shapes, errors)
 - ✅ `daemon.test.ts` — 2 tests for voice tool delegation
 
 **Coverage gaps identified:**
+
 - ❌ **No integration test** for end-to-end voice flow (ephemeral key → session → tool delegation)
 - ❌ **No test for key expiry** — if a test mints a key with `expires_at`, does recycle trigger correctly? (No recycle is called today)
 - ❌ **No test for concurrent start/stop** — rapid toggle via UI
@@ -378,19 +405,19 @@
 
 ### Critical Issues (Must Fix)
 
-| ID  | Issue | Severity | File | Impact |
-|-----|-------|----------|------|--------|
-| **#1** | `speakChain` not awaited on stop | MEDIUM | VoiceHost.ts:287 | Speech plays after session ends |
-| **#2** | No timeout for key mint/provider start | MEDIUM | GptRealtimeProvider.ts:65 | Infinite hang on network failure |
-| **#4** | No ephemeral key expiry handling | MEDIUM | RealtimeKeys.ts + GptRealtimeProvider | Long sessions (>1h) fail mid-conversation |
-| **#5** | No retry logic for transient errors | MEDIUM | RealtimeKeys.ts | Single network hiccup → "error" state |
-| **#6** | LocalCascadeProvider not production-ready | MEDIUM | LocalCascadeProvider.ts | Crashes if user enables before Phase 5 |
+| ID     | Issue                                     | Severity | File                                  | Impact                                    |
+| ------ | ----------------------------------------- | -------- | ------------------------------------- | ----------------------------------------- |
+| **#1** | `speakChain` not awaited on stop          | MEDIUM   | VoiceHost.ts:287                      | Speech plays after session ends           |
+| **#2** | No timeout for key mint/provider start    | MEDIUM   | GptRealtimeProvider.ts:65             | Infinite hang on network failure          |
+| **#4** | No ephemeral key expiry handling          | MEDIUM   | RealtimeKeys.ts + GptRealtimeProvider | Long sessions (>1h) fail mid-conversation |
+| **#5** | No retry logic for transient errors       | MEDIUM   | RealtimeKeys.ts                       | Single network hiccup → "error" state     |
+| **#6** | LocalCascadeProvider not production-ready | MEDIUM   | LocalCascadeProvider.ts               | Crashes if user enables before Phase 5    |
 
 ### Low-Priority Issues
 
-| ID  | Issue | Severity | File | Impact |
-|-----|-------|----------|------|--------|
-| **#3** | Provider not stopped in error path | LOW | VoiceHost.ts:199-204 | Orphaned session on startup failure |
+| ID     | Issue                              | Severity | File                 | Impact                              |
+| ------ | ---------------------------------- | -------- | -------------------- | ----------------------------------- |
+| **#3** | Provider not stopped in error path | LOW      | VoiceHost.ts:199-204 | Orphaned session on startup failure |
 
 ### Non-Issues (Verified Working)
 
@@ -406,7 +433,9 @@
 ## Phase 5: Recommended Fixes (Priority Order)
 
 ### Priority 1: Await `speakChain` on Stop
+
 **File:** `packages/app/src/renderer/overlay/VoiceHost.ts` line 287
+
 ```typescript
 async stop(): Promise<void> {
   this.startEpoch++;
@@ -420,24 +449,32 @@ async stop(): Promise<void> {
 ```
 
 ### Priority 2: Add Timeout to Provider Start & Key Mint
+
 **File:** `packages/voice-providers/src/GptRealtimeProvider.ts` line 65
+
 - Wrap `session.connect()` in timeout (30s recommended)
 - Handle timeout error → emit 'error' event
 
 ### Priority 3: Implement Ephemeral Key Auto-Refresh
+
 **Files:** `RealtimeKeys.ts`, `GptRealtimeProvider.ts`
+
 1. Parse `expires_at` from mint response
 2. Schedule `recycleSession()` ~5 min before expiry
 3. Or: Call `recycleSession()` every 45 minutes as failsafe
 
 ### Priority 4: Add Retry Logic for Transient Errors
+
 **File:** `packages/app/src/main/RealtimeKeys.ts` mintEphemeralKey()
+
 - Retry on 429 (rate limit) and network errors
 - Exponential backoff (1s, 2s, 4s)
 - Max 3 attempts
 
 ### Priority 5: Complete LocalCascadeProvider or Feature-Gate It
+
 **File:** `packages/voice-providers/src/LocalCascadeProvider.ts`
+
 - Option A: Complete implementation for Phase 5
 - Option B: Add feature flag to prevent enabling until ready
 

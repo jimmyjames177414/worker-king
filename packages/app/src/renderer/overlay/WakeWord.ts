@@ -173,7 +173,9 @@ export class WakeWordController {
       stream.getTracks().forEach((t) => t.stop());
       return;
     }
-    console.debug(`[wake] enable: mic acquired (track=${stream.getAudioTracks()[0]?.label ?? '?'})`);
+    console.debug(
+      `[wake] enable: mic acquired (track=${stream.getAudioTracks()[0]?.label ?? '?'})`,
+    );
     this.stream = stream;
     // 16 kHz to match wake-word models.
     this.ctx = new AudioContext({ sampleRate: 16000 });

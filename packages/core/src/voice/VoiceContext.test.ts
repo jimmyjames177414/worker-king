@@ -1,9 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import {
-  computeVoiceContext,
-  VOICE_BASE_PROMPT,
-  MAX_VOICE_PROMPT_CHARS,
-} from './VoiceContext.js';
+import { computeVoiceContext, VOICE_BASE_PROMPT, MAX_VOICE_PROMPT_CHARS } from './VoiceContext.js';
 
 const INPUT = {
   capabilitySummary: 'CAP: deploy, review',
@@ -59,7 +55,11 @@ describe('computeVoiceContext', () => {
   });
 
   it('drops empty/undefined blocks without leaving blank gaps', () => {
-    const out = computeVoiceContext('rich', { capabilitySummary: 'CAP', persona: '', sprint: '  ' });
+    const out = computeVoiceContext('rich', {
+      capabilitySummary: 'CAP',
+      persona: '',
+      sprint: '  ',
+    });
     expect(out).toBe(`${VOICE_BASE_PROMPT}\n\nCAP`);
   });
 

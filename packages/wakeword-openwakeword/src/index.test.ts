@@ -105,10 +105,7 @@ describe('OpenWakeWordDetector', () => {
         }),
     };
     const { sessions } = fakeSessions([0]);
-    const detector = new OpenWakeWordDetector(
-      { ...sessions, melspec: slowMel },
-      { maxQueue: 5 },
-    );
+    const detector = new OpenWakeWordDetector({ ...sessions, melspec: slowMel }, { maxQueue: 5 });
     for (let i = 0; i < 100; i++) detector.process(FRAME); // first frame hangs in slowMel
     // No assertion on internals possible — but flushing must terminate quickly
     // once released, proving the backlog was capped rather than 100 deep.

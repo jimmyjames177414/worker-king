@@ -92,7 +92,10 @@ describe('SprintWatcher', () => {
     const stream = sseStream([
       sseEvent('diff', {
         closed: [{ id: 1, title: 'X' }],
-        reassigned: [{ id: 2, title: 'Y' }, { id: 3, title: 'Z' }],
+        reassigned: [
+          { id: 2, title: 'Y' },
+          { id: 3, title: 'Z' },
+        ],
       }),
     ]);
     makeFetch(stream);

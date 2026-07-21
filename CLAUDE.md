@@ -90,5 +90,6 @@ preLaunchTask and set `WORKERKING_LOG_FILE`, so even while you debug, the daemon
 ## Plan Mode
 
 When ExitPlanMode is called (plan approved):
+
 1. Save the plan to `plans/YYYY-MM-DD-word1-word2-word3.md` at the repo root — date is today, name is at most 3 kebab-cased words summarising the feature.
 2. Ensure `plans/` is in `.gitignore` (already handled).

@@ -24,10 +24,7 @@ function textDelta(text: string): SDKMessage {
 }
 
 /** An assistant message carrying tool_use + thinking blocks. */
-function assistantMsg(
-  content: unknown[],
-  parentToolUseId: string | null = null,
-): SDKMessage {
+function assistantMsg(content: unknown[], parentToolUseId: string | null = null): SDKMessage {
   return {
     type: 'assistant',
     message: { role: 'assistant', content },
@@ -38,10 +35,7 @@ function assistantMsg(
 }
 
 /** A user message carrying tool_result blocks (how the SDK feeds output back). */
-function userToolResult(
-  content: unknown[],
-  parentToolUseId: string | null = null,
-): SDKMessage {
+function userToolResult(content: unknown[], parentToolUseId: string | null = null): SDKMessage {
   return {
     type: 'user',
     message: { role: 'user', content },
@@ -287,7 +281,9 @@ describe('ClaudeBackend.respond activity', () => {
           { type: 'thinking', thinking: 'planning' },
           { type: 'tool_use', id: 't1', name: 'Read', input: { file_path: 'a.ts' } },
         ]),
-        userToolResult([{ type: 'tool_result', tool_use_id: 't1', is_error: false, content: 'code' }]),
+        userToolResult([
+          { type: 'tool_result', tool_use_id: 't1', is_error: false, content: 'code' },
+        ]),
         successResult('s', 'done'),
       ]),
     });
